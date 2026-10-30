@@ -1,11 +1,14 @@
 package fsim;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-/** Camada física: um disco dividido em blocos de tamanho fixo. */
+/**
+ * Camada física vista pelo sistema de arquivos: um disco lógico dividido em blocos de tamanho fixo, guardado
+ * em um arranjo RAID. Cada leitura ou gravação feita pelo sistema de arquivos vira requisições nas filas dos
+ * discos físicos; a leitura de metadados mantidos em cache (`peek`) não gera E/S.
+ */
 final class Disk {
     static final String RESERVED = "RESERVADO"; // superbloco / tabela de diretórios / FAT
     static final String INODE = "INODE";        // bloco de índice (i-node)
@@ -31,13 +34,13 @@ final class Disk {
 
     final int blockSize;
     final int numBlocks;
-    final byte[][] data;
+    final RaidArray array;
     final BlockInfo[] info;
 
-    Disk(int blockSize, int numBlocks) {
+    Disk(int blockSize, int numBlocks, RaidArray array) {
         this.blockSize = blockSize;
         this.numBlocks = numBlocks;
-        this.data = new byte[numBlocks][blockSize];
+        this.array = array;
         this.info = new BlockInfo[numBlocks];
     }
 
@@ -99,11 +102,30 @@ final class Disk {
 
     void release(int i) {
         info[i] = null;
-        Arrays.fill(data[i], (byte) 0);
+        array.write(i, new byte[blockSize], false);
     }
 
+    /** Zera todo o disco sem gerar E/S (usado pela desfragmentação, que regrava tudo). */
+    void wipe() {
+        for (int i = 0; i < numBlocks; i++) {
+            release(i);
+        }
+    }
+
+    /** Leitura de dados pelo sistema de arquivos: gera requisição de E/S. */
+    byte[] read(int i) {
+        return array.read(i, true);
+    }
+
+    /** Leitura de metadados mantidos em memória (cache de i-node/FAT): não gera E/S. */
+    byte[] peek(int i) {
+        return array.read(i, false);
+    }
+
+    /** Gravação de `length` bytes a partir de `offset`; o restante do bloco é zerado. Gera E/S. */
     void write(int i, byte[] src, int offset, int length) {
-        Arrays.fill(data[i], (byte) 0);
-        System.arraycopy(src, offset, data[i], 0, length);
+        byte[] block = new byte[blockSize];
+        System.arraycopy(src, offset, block, 0, length);
+        array.write(i, block, true);
     }
 }

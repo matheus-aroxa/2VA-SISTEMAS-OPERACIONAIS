@@ -17,12 +17,12 @@ final class FileSystem {
     Node root;
     Node cwd;
 
-    FileSystem(int blockSize, int numBlocks, String strategy, String fit) {
-        format(blockSize, numBlocks, strategy, fit);
+    FileSystem(int blockSize, int numBlocks, String strategy, String fit, RaidArray.Level level, int disks) {
+        format(blockSize, numBlocks, strategy, fit, level, disks);
     }
 
     // ------------------------------------------------------------------ disco
-    void format(long blockSize, long numBlocks, String strategy, String fit) {
+    void format(long blockSize, long numBlocks, String strategy, String fit, RaidArray.Level level, int disks) {
         if (!Allocator.FITS.contains(fit)) {
             throw new FSException("política de encaixe inválida: '" + fit + "' (use first, best ou worst)");
         }
@@ -32,13 +32,15 @@ final class FileSystem {
         if (numBlocks < 2 || numBlocks > 4096) {
             throw new FSException("o número de blocos deve estar entre 2 e 4096");
         }
-        Disk newDisk = new Disk((int) blockSize, (int) numBlocks);
+        RaidArray array = new RaidArray(level, disks, (int) blockSize, (int) numBlocks);
+        Disk newDisk = new Disk((int) blockSize, (int) numBlocks, array);
         Allocator newAlloc = Allocator.create(strategy, newDisk, fit);
         disk = newDisk;
         alloc = newAlloc;
         root = new Node("", true, null);
         alloc.createNode(root);
         cwd = root;
+        array.resetQueues(); // a formatação não conta como carga de trabalho
     }
 
     // ---------------------------------------------------------------- caminhos
@@ -301,7 +303,7 @@ final class FileSystem {
         int offset = 0;
         for (int b : alloc.dataBlocks(node)) {
             int len = Math.min(disk.blockSize, node.size - offset);
-            System.arraycopy(disk.data[b], 0, out, offset, len);
+            System.arraycopy(disk.read(b), 0, out, offset, len);
             offset += len;
         }
         return out;
@@ -338,7 +340,8 @@ final class FileSystem {
                 contents.put(n, load(n));
             }
         }
-        disk = new Disk(disk.blockSize, disk.numBlocks);
+        disk = new Disk(disk.blockSize, disk.numBlocks, disk.array);
+        disk.wipe();
         alloc = Allocator.create(alloc.key(), disk, alloc.fit);
         for (Node n : nodes) {
             alloc.createNode(n);

@@ -120,6 +120,48 @@ está ocupado, o que deixa a fragmentação interna visível no último bloco de
 - **Compactação necessária**: `SIM` quando o espaço livre da alocação contígua está dividido em mais de uma lacuna.
   Também aparece um `ALERTA` quando uma alocação foi recusada por esse motivo.
 
+## Etapa 2 — Integração com o disco: E/S, escalonamento, SSD e RAID
+
+Cada leitura e gravação do sistema de arquivos vira requisições de E/S no arranjo de discos:
+
+- **Integração**: `Disk.read` (dado) e `Disk.write` geram requisições; `Disk.peek` (metadados em cache) não gera E/S.
+  O arranjo traduz cada bloco lógico em operações nos discos físicos, e cada disco físico tem sua fila e sua cabeça.
+- **Escalonamento do braço** (`disk_sched`, ou automático com `iosched`): FCFS, SSTF, SCAN e C-SCAN, com o
+  deslocamento total. SCAN e C-SCAN vão até a última trilha; o salto de retorno do C-SCAN entra no total.
+- **SSD** (`ssd_demo`): FTL de páginas com escrita fora do lugar, coleta de lixo (GC) e balanceamento de
+  desgaste (wear leveling). Mostra a amplificação de escrita e a distribuição de apagamentos por bloco.
+- **RAID** (`format --raid 0|1|4|5 --disks N`): RAID 0 (listras), RAID 1 (espelho), RAID 4 (paridade em disco
+  dedicado) e RAID 5 (paridade rotativa). Escritas pequenas usam leitura-modificação-escrita; `fail N` simula a
+  falha de um disco e `rebuild N` reconstrói por espelho ou XOR.
+
+| Comando | Descrição |
+|---|---|
+| `array` | Layout do arranjo: quais blocos lógicos e paridades estão em cada disco |
+| `io` | Requisições pendentes em cada disco físico |
+| `disk_sched FCFS\|SSTF\|SCAN\|C-SCAN [--head N] [--trilhas 98,183,37]` | Escalona as filas (ou as trilhas informadas) |
+| `iosched FCFS\|SSTF\|SCAN\|C-SCAN\|off` | Escalona automaticamente após cada comando com E/S |
+| `fail <disco>` / `rebuild <disco>` | Falha simulada e reconstrução |
+| `ssd_demo [--writes N]` | Compara SSD sem e com balanceamento de desgaste |
+
+Exemplo — escalonamento SSTF (cabeça na trilha 53, pedidos 98, 183, 37, 122, 14):
+
+```
+> format --blocks 200 --block-size 512B
+> disk_sched SSTF --head 53 --trilhas 98,183,37,122,14
+Ordem de Atendimento : 53 -> 37 -> 14 -> 98 -> 122 -> 183
+Total de Movimento   : 16 + 23 + 84 + 24 + 61 = 208 trilhas
+```
+
+Exemplo — RAID 5 com 3 discos (`demo raid5`): a faixa 0 tem paridade no Disco 3 e dados nos Discos 1 e 2; com o
+Disco 2 em falha, o bloco é recuperado por XOR dos Discos 1 e 3.
+
+Testes da Etapa 2:
+
+```bash
+javac -d out src/fsim/*.java test/fsim/IoTest.java
+java -ea -cp out fsim.IoTest
+```
+
 ## Estrutura
 
 ```
@@ -127,12 +169,17 @@ src/fsim/Main.java                 ponto de entrada (CLI / roteiros)
 src/fsim/Shell.java                interpretador de comandos e demos
 src/fsim/FileSystem.java           árvore, caminhos, CRUD e desfragmentação
 src/fsim/Node.java                 arquivo/diretório
-src/fsim/Disk.java                 disco físico em blocos
+src/fsim/Disk.java                 disco lógico em blocos (usa o arranjo RAID)
 src/fsim/Allocator.java            base das estratégias de alocação
 src/fsim/ContiguousAllocator.java  alocação contígua
 src/fsim/FatAllocator.java         alocação encadeada (FAT)
 src/fsim/IndexedAllocator.java     alocação indexada (i-node)
 src/fsim/Report.java               árvore, mapas e relatório de fragmentação
-test/fsim/FileSystemTest.java      testes
+src/fsim/RaidArray.java            arranjo RAID 0/1/4/5 e reconstrução
+src/fsim/PhysicalDisk.java         disco físico: blocos, cabeça e fila de E/S
+src/fsim/IoRequest.java            requisição de E/S (operação e trilha)
+src/fsim/ArmScheduler.java         escalonamento do braço (FCFS, SSTF, SCAN, C-SCAN)
+src/fsim/FlashSim.java             SSD: FTL, coleta de lixo e balanceamento de desgaste
+test/fsim/IoTest.java              testes da Etapa 2
 exemplos/                          roteiros de demonstração
 ```
