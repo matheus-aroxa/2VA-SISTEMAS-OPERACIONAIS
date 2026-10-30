@@ -1,0 +1,22 @@
+# Saída de compilação do Java (gerada por `javac -d out ...`)
+out/
+*.class
+
+# Arquivos gerados pelo IntelliJ / JetBrains
+.idea/
+*.iml
+
+# Configurações locais do VS Code (mantém settings.json e launch.json versionados)
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+*~
+*.swp
+
+# Logs e saídas temporárias
+*.log
+*.tmp
