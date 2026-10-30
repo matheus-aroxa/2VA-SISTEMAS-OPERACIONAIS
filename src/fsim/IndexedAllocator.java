@@ -83,7 +83,7 @@ final class IndexedAllocator extends Allocator {
         if (b == null) {
             return blocks;
         }
-        ByteBuffer buf = ByteBuffer.wrap(disk.data[b]).order(ByteOrder.LITTLE_ENDIAN);
+        ByteBuffer buf = ByteBuffer.wrap(disk.peek(b)).order(ByteOrder.LITTLE_ENDIAN);
         int count = buf.getInt();
         for (int k = 0; k < count; k++) {
             blocks.add(buf.getInt());

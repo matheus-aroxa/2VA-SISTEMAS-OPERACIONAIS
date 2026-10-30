@@ -5,15 +5,19 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /** Interpretador de comandos do simulador. */
 final class Shell {
+    private static final long SSD_SEED = 42;
+
     static final String HELP = """
             Navegação
               pwd                              diretório atual
@@ -39,9 +43,21 @@ final class Shell {
               map                              apenas o mapa gráfico
               defrag                           compacta / desfragmenta o disco
               format [--strategy contigua|encadeada|indexada] [--block-size 4KB] [--blocks 16] [--fit first|best|worst]
+                     [--raid 0|1|4|5] [--disks N]
                                                formata o disco (apaga tudo)
-              demo [indexada|contigua|encadeada]
+              demo [indexada|contigua|encadeada|raid5]
                                                executa um cenário de demonstração
+
+            E/S e arranjo RAID
+              array                            layout do arranjo: blocos lógicos por disco físico
+              io                               requisições pendentes em cada disco
+              disk_sched FCFS|SSTF|SCAN|C-SCAN [--head N] [--trilhas 98,183,37]
+                                               escalona as filas agora (ou as trilhas informadas) e mostra o deslocamento
+              iosched FCFS|SSTF|SCAN|C-SCAN|off
+                                               escalona automaticamente após cada comando com E/S
+              fail <disco>                     simula a falha de um disco físico (1..N)
+              rebuild <disco>                  reconstrói o disco substituído (espelho ou XOR)
+              ssd_demo [--writes N]            compara SSD sem e com balanceamento de desgaste
 
             Outros
               echo <texto>  |  help  |  exit""";
@@ -76,6 +92,16 @@ final class Shell {
                 "defrag",
                 "create grande.bin --size 16KB",
                 "fs_status --details"));
+        DEMOS.put("raid5", List.of(
+                "format --strategy indexada --block-size 4KB --blocks 12 --raid 5 --disks 3",
+                "iosched SSTF",
+                "mkdir /dados",
+                "create /dados/planilha.csv --size 8KB",
+                "array",
+                "fail 2",
+                "create /dados/resumo.txt --content \"Relatório gerado com o disco 2 em falha.\"",
+                "rebuild 2",
+                "array"));
         DEMOS.put("encadeada", List.of(
                 "format --strategy encadeada --block-size 1KB --blocks 32",
                 "mkdir -p /home/user",
@@ -95,6 +121,7 @@ final class Shell {
     private final Report.Palette pal;
     private final PrintStream out;
     private final Map<String, Consumer<List<String>>> commands = new HashMap<>();
+    private ArmScheduler.Policy autoPolicy; // escalonamento automático após comandos com E/S (null = desligado)
 
     Shell(FileSystem fs, boolean color, PrintStream out) {
         this.fs = fs;
@@ -124,6 +151,13 @@ final class Shell {
         commands.put("compact", this::defrag);
         commands.put("format", this::format);
         commands.put("demo", this::demo);
+        commands.put("array", this::array);
+        commands.put("io", this::io);
+        commands.put("disk_sched", this::diskSched);
+        commands.put("iosched", this::ioSched);
+        commands.put("fail", this::fail);
+        commands.put("rebuild", this::rebuild);
+        commands.put("ssd_demo", this::ssdDemo);
     }
 
     // ------------------------------------------------------------- execução
@@ -158,6 +192,9 @@ final class Shell {
             handler.accept(args);
         } catch (FSException e) {
             out.println("Erro: " + e.getMessage());
+        }
+        if (autoPolicy != null && pendingIo()) {
+            dispatch(autoPolicy, null);
         }
         return true;
     }
@@ -380,18 +417,24 @@ final class Shell {
     }
 
     private void format(List<String> args) {
-        Parsed p = opts(args, Set.of("--strategy", "-s", "--block-size", "--blocks", "--fit"), Set.of());
+        Parsed p = opts(args, Set.of("--strategy", "-s", "--block-size", "--blocks", "--fit", "--raid", "--disks"),
+                Set.of());
         Map<String, String> o = p.opts();
         String strategy = o.getOrDefault("--strategy", o.getOrDefault("-s", fs.alloc.key()));
         long blockSize = o.containsKey("--block-size") ? Units.parseSize(o.get("--block-size")) : fs.disk.blockSize;
         long blocks;
+        int disks;
         try {
             blocks = o.containsKey("--blocks") ? Long.parseLong(o.get("--blocks")) : fs.disk.numBlocks;
+            disks = o.containsKey("--disks") ? Integer.parseInt(o.get("--disks")) : fs.disk.array.disks.length;
         } catch (NumberFormatException e) {
-            throw new FSException("--blocks deve ser um número inteiro");
+            throw new FSException("--blocks e --disks devem ser números inteiros");
         }
-        fs.format(blockSize, blocks, strategy, o.getOrDefault("--fit", fs.alloc.fit));
-        out.println("Disco formatado: " + fs.alloc.title() + " | " + fs.disk.numBlocks + " blocos de "
+        RaidArray.Level level = o.containsKey("--raid")
+                ? RaidArray.parseLevel(o.get("--raid")) : fs.disk.array.level;
+        fs.format(blockSize, blocks, strategy, o.getOrDefault("--fit", fs.alloc.fit), level, disks);
+        out.println("Disco formatado: " + fs.alloc.title() + " | " + fs.disk.array.label() + " | "
+                + fs.disk.numBlocks + " blocos de "
                 + Units.fmtSize(fs.disk.blockSize) + " (" + Units.fmtSize(fs.disk.capacity()) + ")");
     }
 
@@ -401,6 +444,204 @@ final class Shell {
             throw new FSException("demos disponíveis: " + String.join(", ", DEMOS.keySet()));
         }
         runScript(DEMOS.get(name));
+    }
+
+    // ------------------------------------------------------------ E/S e arranjo
+    private boolean pendingIo() {
+        for (PhysicalDisk d : fs.disk.array.disks) {
+            if (!d.queue.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void array(List<String> args) {
+        RaidArray arr = fs.disk.array;
+        out.println("Arranjo: " + arr.label() + " | " + arr.blocksPerDisk + " bloco(s) físico(s) por disco | "
+                + Units.fmtSize(arr.blockSize) + " por bloco | " + arr.logicalBlocks + " blocos lógicos");
+        StringBuilder head = new StringBuilder("Bloco  ");
+        for (PhysicalDisk d : arr.disks) {
+            head.append(String.format("%-16s", "Disco " + (d.id + 1) + (d.failed ? " [FALHOU]" : "")));
+        }
+        out.println(head.toString().stripTrailing());
+        for (int p = 0; p < arr.blocksPerDisk; p++) {
+            StringBuilder row = new StringBuilder(String.format("%02d     ", p));
+            for (PhysicalDisk d : arr.disks) {
+                row.append(String.format("%-16s", cell(arr, d, p)));
+            }
+            out.println(row.toString().stripTrailing());
+        }
+    }
+
+    private String cell(RaidArray arr, PhysicalDisk d, int p) {
+        if (d.failed) {
+            return "(perdido)";
+        }
+        int lb = arr.logicalAt(d.id, p);
+        if (lb < 0) {
+            return "PARIDADE";
+        }
+        if (lb >= arr.logicalBlocks) {
+            return "(vazio)";
+        }
+        Disk.BlockInfo info = fs.disk.info[lb];
+        return info == null ? String.format("L%02d livre", lb) : String.format("L%02d %s", lb, info.kind);
+    }
+
+    private void io(List<String> args) {
+        if (!pendingIo()) {
+            out.println("Nenhuma requisição pendente. (L = leitura, G = gravação; números = trilhas)");
+            return;
+        }
+        for (PhysicalDisk d : fs.disk.array.disks) {
+            String reqs = d.queue.stream()
+                    .map(r -> (r.op() == IoRequest.Op.LEITURA ? "L" : "G") + r.track())
+                    .collect(Collectors.joining(", "));
+            out.printf("Disco %d (cabeça na trilha %d): %s%n", d.id + 1, d.head, reqs.isEmpty() ? "(vazia)" : reqs);
+        }
+    }
+
+    private void diskSched(List<String> args) {
+        Parsed p = opts(args, Set.of("--head", "--trilhas"), Set.of());
+        need(p.pos(), 1, "disk_sched FCFS|SSTF|SCAN|C-SCAN [--head N] [--trilhas 98,183,37]");
+        ArmScheduler.Policy policy = ArmScheduler.Policy.parse(p.pos().get(0));
+        Integer head = p.opts().containsKey("--head") ? track(p.opts().get("--head")) : null;
+        if (p.opts().containsKey("--trilhas")) {
+            // simulação isolada: as trilhas informadas viram a fila, sem tocar nas filas reais
+            List<Integer> tracks = Arrays.stream(p.opts().get("--trilhas").split(","))
+                    .map(t -> track(t.strip())).toList();
+            schedule(policy, head == null ? 0 : head, tracks);
+            return;
+        }
+        if (!pendingIo()) {
+            out.println("Nenhuma requisição pendente.");
+            return;
+        }
+        dispatch(policy, head);
+    }
+
+    private void ioSched(List<String> args) {
+        need(args, 1, "iosched FCFS|SSTF|SCAN|C-SCAN|off");
+        if (args.get(0).equalsIgnoreCase("off")) {
+            autoPolicy = null;
+            out.println("Escalonamento automático desligado.");
+            return;
+        }
+        autoPolicy = ArmScheduler.Policy.parse(args.get(0));
+        out.println("Escalonamento automático: " + autoPolicy.label + " (após cada comando com E/S)");
+    }
+
+    private void fail(List<String> args) {
+        need(args, 1, "fail <disco>");
+        int d = diskNumber(args.get(0));
+        fs.disk.array.fail(d);
+        out.println("Disco " + (d + 1) + ": falha simulada, conteúdo perdido. Arranjo em modo degradado.");
+    }
+
+    private void rebuild(List<String> args) {
+        need(args, 1, "rebuild <disco>");
+        int d = diskNumber(args.get(0));
+        RaidArray arr = fs.disk.array;
+        int n = arr.rebuild(d);
+        String source = arr.level == RaidArray.Level.RAID1 ? "cópia do espelho" : "XOR dos demais discos";
+        out.println("Disco " + (d + 1) + " reconstruído: " + n + " bloco(s) recalculados por " + source + " [OK]");
+    }
+
+    /** Escalona a fila de cada disco físico, mostra a ordem de atendimento e o deslocamento e esvazia as filas. */
+    private void dispatch(ArmScheduler.Policy policy, Integer head) {
+        for (PhysicalDisk d : fs.disk.array.disks) {
+            if (head != null) {
+                d.head = head;
+            }
+            if (d.queue.isEmpty()) {
+                continue;
+            }
+            List<Integer> tracks = d.queue.stream().map(IoRequest::track).toList();
+            out.println("[E/S] Disco " + (d.id + 1) + " — requisições pendentes nas trilhas: " + tracks);
+            d.head = schedule(policy, d.head, tracks);
+            d.queue.clear();
+        }
+    }
+
+    /** Mostra a ordem de atendimento e o deslocamento do braço; devolve a trilha final da cabeça. */
+    private int schedule(ArmScheduler.Policy policy, int head, List<Integer> tracks) {
+        ArmScheduler.Plan plan = ArmScheduler.plan(policy, head, tracks, fs.disk.array.blocksPerDisk - 1);
+        List<Integer> path = plan.path();
+        StringBuilder order = new StringBuilder().append(head);
+        plan.order().forEach(t -> order.append(" -> ").append(t));
+        StringBuilder moves = new StringBuilder();
+        StringBuilder trajeto = new StringBuilder().append(path.get(0));
+        for (int i = 1; i < path.size(); i++) {
+            long step = Math.abs(path.get(i) - path.get(i - 1));
+            moves.append(i > 1 ? " + " : "").append(step);
+            trajeto.append(" -> ").append(path.get(i));
+        }
+        out.println("Posição atual da cabeça: Trilha " + head);
+        out.println("--- ESCALONAMENTO DE DISCO: " + policy.label + " ---");
+        out.println("Ordem de Atendimento : " + order);
+        out.println("Trajeto da Cabeça    : " + trajeto);
+        out.println("Total de Movimento   : " + moves + " = " + ArmScheduler.length(path) + " trilhas");
+        if (plan.returnMove() > 0) {
+            out.println("Retorno do C-SCAN    : " + plan.returnMove() + " trilhas (incluso no total)");
+        }
+        out.println();
+        return path.get(path.size() - 1);
+    }
+
+    private void ssdDemo(List<String> args) {
+        Parsed p = opts(args, Set.of("--writes"), Set.of());
+        int writes = p.opts().containsKey("--writes") ? count(p.opts().get("--writes")) : 2000;
+        FlashSim semWl = new FlashSim(16, 8, false);
+        FlashSim comWl = new FlashSim(16, 8, true);
+        semWl.replay(writes, SSD_SEED);
+        comWl.replay(writes, SSD_SEED);
+        out.println("--- SSD (flash): 16 blocos de apagamento × 8 páginas, " + semWl.logicalPages
+                + " páginas lógicas, carga inicial + " + writes + " atualizações (90% em 10% das páginas) ---");
+        ssdRow("", "sem WL", "com WL (dinâmico)");
+        ssdRow("Escritas do host", semWl.hostWrites, comWl.hostWrites);
+        ssdRow("Gravações físicas", semWl.flashWrites, comWl.flashWrites);
+        ssdRow("Cópias do GC", semWl.gcCopies, comWl.gcCopies);
+        ssdRow("Apagamentos (total)", semWl.erasures, comWl.erasures);
+        ssdRow("Amplificação de escrita", String.format("%.2f", semWl.writeAmplification()),
+                String.format("%.2f", comWl.writeAmplification()));
+        FlashSim.Wear a = semWl.wear();
+        FlashSim.Wear b = comWl.wear();
+        ssdRow("Desgaste mín / máx", a.min() + " / " + a.max(), b.min() + " / " + b.max());
+        ssdRow("Desgaste média / desvio", String.format("%.1f / %.2f", a.mean(), a.stdDev()),
+                String.format("%.1f / %.2f", b.mean(), b.stdDev()));
+        out.println("Apagamentos por bloco (sem WL): " + Arrays.toString(semWl.eraseCounts()));
+        out.println("Apagamentos por bloco (com WL): " + Arrays.toString(comWl.eraseCounts()));
+        out.println("Sem WL, o GC reaproveita sempre os blocos de menor índice; com WL, o bloco livre escolhido é o menos desgastado.");
+    }
+
+    private void ssdRow(String label, Object sem, Object com) {
+        out.printf("%-28s %16s %22s%n", label, sem, com);
+    }
+
+    private int diskNumber(String text) {
+        int n = count(text);
+        if (n < 1 || n > fs.disk.array.disks.length) {
+            throw new FSException("disco inválido: '" + text + "' (use 1 a " + fs.disk.array.disks.length + ")");
+        }
+        return n - 1;
+    }
+
+    private int track(String text) {
+        int max = fs.disk.array.blocksPerDisk - 1;
+        int t = count(text);
+        if (t < 0 || t > max) {
+            throw new FSException("trilha fora do disco (use 0 a " + max + ")");
+        }
+        return t;
+    }
+
+    private static int count(String text) {
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException e) {
+            throw new FSException("'" + text + "' deve ser um número inteiro");
+        }
     }
 
     // ------------------------------------------------------------ auxiliares

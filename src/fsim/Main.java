@@ -28,6 +28,8 @@ public final class Main {
               --block-size B     tamanho do bloco (padrão: 4KB)
               --blocks N         quantidade de blocos (padrão: 16)
               --fit F            first | best | worst (só alocação contígua)
+              --raid N           0 | 1 | 4 | 5 (padrão: 0)
+              --disks N          discos físicos do arranjo (padrão: 1)
               --no-color         desativa cores ANSI
               -h, --help         mostra esta ajuda""";
 
@@ -40,6 +42,8 @@ public final class Main {
         String blockSize = "4KB";
         String blocks = "16";
         String fit = "first";
+        String raid = "0";
+        String disks = "1";
         String script = null;
         boolean noColor = false;
 
@@ -49,6 +53,8 @@ public final class Main {
                 case "--block-size" -> blockSize = value(args, ++i, out);
                 case "--blocks" -> blocks = value(args, ++i, out);
                 case "--fit" -> fit = value(args, ++i, out);
+                case "--raid" -> raid = value(args, ++i, out);
+                case "--disks" -> disks = value(args, ++i, out);
                 case "--no-color" -> noColor = true;
                 case "-h", "--help" -> {
                     out.println(USAGE);
@@ -65,9 +71,10 @@ public final class Main {
 
         FileSystem fs = null;
         try {
-            fs = new FileSystem((int) Units.parseSize(blockSize), Integer.parseInt(blocks), strategy, fit);
+            fs = new FileSystem((int) Units.parseSize(blockSize), Integer.parseInt(blocks), strategy, fit,
+                    RaidArray.parseLevel(raid), Integer.parseInt(disks));
         } catch (FSException | NumberFormatException e) {
-            fail(out, e instanceof NumberFormatException ? "--blocks deve ser um número inteiro" : e.getMessage());
+            fail(out, e instanceof NumberFormatException ? "--blocks e --disks devem ser inteiros" : e.getMessage());
         }
 
         Shell shell = new Shell(fs, !noColor && isTerminal() && System.getenv("NO_COLOR") == null, out);
