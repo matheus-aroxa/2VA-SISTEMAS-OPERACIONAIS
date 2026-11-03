@@ -21,18 +21,19 @@ Simulador em **Java 17+** (sem dependências externas) de um sistema de arquivos
 javac -d out src/fsim/*.java
 java -cp out fsim.Main                                   # modo interativo (padrão: indexada, 16 blocos de 4KB)
 java -cp out fsim.Main -s contigua --block-size 1KB --blocks 32
-java -cp out fsim.Main exemplos/indexada.txt             # executa um roteiro de comandos
+java -cp out fsim.Main roteiro.txt                       # opcional: executa um arquivo de roteiro de comandos
 ```
 
 Testes:
 
 ```bash
 javac -d out src/fsim/*.java test/fsim/*.java
-java -cp out fsim.FileSystemTest
+java -ea -cp out fsim.IoTest
+java -ea -cp out fsim.SecurityTest
 ```
 
-Dentro do simulador, `demo indexada`, `demo contigua` e `demo encadeada` executam cenários prontos (os mesmos de
-`exemplos/`), e `help` lista todos os comandos.
+Dentro do simulador, `demo indexada`, `demo contigua`, `demo encadeada`, `demo raid5` e `demo seguranca` executam
+cenários prontos de demonstração, e `help` lista todos os comandos.
 
 ## Comandos
 
@@ -162,24 +163,129 @@ javac -d out src/fsim/*.java test/fsim/IoTest.java
 java -ea -cp out fsim.IoTest
 ```
 
+## Etapa 3 — Segurança e Proteção
+
+Camada de segurança, controle de acesso, criptografia e integridade integrada ao sistema de arquivos e aos discos:
+
+- **Modos de operação (`MODO_KERNEL` vs `MODO_USUARIO`) e `sudo`**: o simulador inicia como `root` em `MODO_KERNEL`
+  (mantendo compatibilidade integral com as Etapas 1 e 2). Ao autenticar um usuário comum (`login`), a sessão passa a
+  operar em `MODO_USUARIO` (prompt `$` em vez de `#`), bloqueando operações administrativas de sistema (`format`,
+  `defrag`, `useradd`, `userdel`, `groupadd`, `usermod`, `chown`, `fail`, `rebuild`, `iosched`, `tamper_block` e
+  `audit_log`). O comando `sudo` eleva temporariamente uma única execução para `MODO_KERNEL` mediante validação de
+  senha, restaurando `MODO_USUARIO` imediatamente ao final.
+- **Autenticação com `SHA-256` + `salt` aleatório de 16 bytes**: nenhuma senha é armazenada em claro; cada conta gera
+  um `salt` criptograficamente aleatório de 16 bytes (`SecureRandom`) e persiste apenas `hash = SHA-256(salt || senha_utf8)`,
+  verificado em tempo constante (`MessageDigest.isEqual`) para mitigar *rainbow tables* e canais laterais de tempo.
+- **Matriz de permissões POSIX (`rwx`) e ACL estendida**: cada arquivo e diretório guarda dono, grupo e modo de 9 bits
+  (`rwxrwxrwx`, aceitando notação octal como `750` e simbólica como `u=rwx,g=rx,o=`, `+x`), além de entradas nominais
+  de ACL estendida por usuário ou grupo (`setfacl` / `getfacl`, indicadas pelo sufixo `+`). A travessia de caminhos
+  exige permissão `x` em cada diretório percorrido, e toda verificação ocorre em `FileSystem` **antes** de alocar
+  blocos ou enfileirar requisições de E/S nos discos físicos (preservando atomicidade).
+- **Criptografia de dados em repouso (`AES-256/CTR` + `HMAC-SHA256`)**: `encrypt_file` cifra o conteúdo real gravado
+  nos blocos físicos com `AES/CTR/NoPadding` (subchave de 256 bits derivada por domínio e IV aleatório de 16 bytes,
+  preservando o tamanho exato do arquivo sem *padding*) e armazena um verificador `HMAC-SHA256(subchave_mac, IV)` para
+  rejeitar chaves incorretas sem corromper o disco. Funciona de forma transparente sobre qualquer alocador e sobre
+  arranjos RAID (incluindo reconstrução por XOR em modo degradado).
+- **Monitor de integridade por bloco (`SHA-256`) e antivírus com quarentena**: a cada gravação legítima do sistema de
+  arquivos, `IntegrityMonitor` registra o hash `SHA-256` oficial de cada bloco lógico (via `peek`, sem gerar E/S extra).
+  O comando `antivirus_scan` lê os blocos do disco, detecta adulterações físicas diretas (`tamper_block` / corrupção
+  silenciosa) e identifica assinaturas conhecidas de malware (como `EICAR-Test-Signature`). Com `--quarantine`, arquivos
+  comprometidos recebem modo `000`, têm ACLs limpas e ficam bloqueados contra leitura, escrita e execução.
+- **Trilha de auditoria (`audit_log`)**: eventos de identidade, autenticação, tentativas de privilégio, negações de ACL,
+  execução, criptografia e integridade são registrados sequencialmente em memória com categoria, usuário e modo.
+
+| Comando | Descrição |
+|---|---|
+| `login [--user] <usuario> [--password S]` / `logout` | Autentica usuário (alternando o modo da sessão) / retorna a `root` (`MODO_KERNEL`) |
+| `whoami` / `id` | Exibe usuário atual, grupos e modo de operação |
+| `sudo [--password S] <cmd> ...` | Executa um comando temporariamente em `MODO_KERNEL` |
+| `useradd <usr> [--group G] [--password S] [--admin]` | Cria usuário com `salt` aleatório de 16 B + hash `SHA-256` |
+| `userdel <usuario>` | Remove usuário cadastrado |
+| `groupadd <grupo>` / `usermod <usr> --add-group <grp>` | Cria grupo / adiciona usuário a grupo suplementar |
+| `passwd [usuario] [--password S]` | Altera a senha regenerando `salt` e hash `SHA-256` |
+| `users` / `groups` | Lista grupos, usuários, modos e prefixos de `salt`/`sha256` |
+| `chmod <modo> <caminho>` | Altera permissões POSIX em octal (`750`) ou simbólico (`u=rwx,g=rx,o=`, `+x`) |
+| `chown <dono>[:<grp>] <caminho>` / `chgrp <grupo> <caminho>` | Altera proprietário e/ou grupo do objeto |
+| `setfacl (-m <u\|g:nome:perm> \| -x <u\|g:nome> \| -b) <caminho>` | Define, remove ou limpa entradas da ACL estendida |
+| `getfacl <caminho>` / `acl <caminho>` | Exibe permissões POSIX e entradas detalhadas da ACL |
+| `ls -l [caminho]` / `stat <caminho>` | Lista permissões, dono, grupo e proteção (`[ENC]`, `[QUAR]`) |
+| `read_file <arq> [--key CHAVE]` (`cat`) / `exec <arq>` | Lê conteúdo (decifrando em memória se `--key`) / simula execução exigindo `x` |
+| `encrypt_file <arq> --key CHAVE` / `decrypt_file <arq> --key CHAVE` | Cifra / decifra blocos físicos em repouso (`AES-256-CTR`) |
+| `antivirus_scan [caminho] [--quarantine]` | Verifica hashes `SHA-256` dos blocos e assinaturas maliciosas |
+| `tamper_block <bloco> [dados]` | Simula adulteração direta em bloco físico fora do sistema de arquivos |
+| `audit_log [--clear]` | Exibe ou limpa a trilha cronológica de auditoria de segurança |
+
+Exemplo 3.1 — autenticação em `MODO_USUARIO` e bloqueio pela Matriz/ACL (sem gerar E/S física):
+
+```
+> login --user carlos --password segredo123
+Senha: **********
+Autenticado com sucesso. Usuário: 'carlos' | Grupo: 'devs' | Modo: MODO_USUARIO
+> read_file /sistema/config.sys
+[SISTEMA DE SEGURANÇA - VERIFICAÇÃO DE ACL]
+Objeto      : /sistema/config.sys
+Proprietário: root (Grupo: admin)
+Permissões  : rwxr-x--- (750)
+Ação Pedida : LEITURA por 'carlos' (Grupo: devs)
+
+[NEGADO]: O usuário 'carlos' não possui permissão de leitura no objeto '/sistema/config.sys'.
+Tentativa não autorizada registrada nos logs do sistema.
+```
+
+Exemplo 3.2 — criptografia de dados em repouso e varredura de integridade / antivírus (`demo seguranca`):
+
+```
+> encrypt_file /home/carlos/segredo.txt --key "MinhaChave123"
+Arquivo '/home/carlos/segredo.txt' criptografado com sucesso.
+Conteúdo gravado nos blocos físicos: "0x8F4A12B09C3E71D4... (Encrypted Ciphertext)"
+> antivirus_scan / --quarantine
+[MÓDULO DE SEGURANÇA - VARREDURA DE INTEGRIDADE]
+Analisando 4 arquivos em busca de assinaturas maliciosas e hashes corrompidos...
+- /home/carlos/segredo.txt    : [OK - Criptografado e Íntegro]
+- /home/carlos/suspeito.tmp   : [AMEAÇA] Assinatura maliciosa detectada: 'EICAR-Test-Signature'!
+  Resultado: Conteúdo malicioso identificado no arquivo.
+  Ação     : Arquivo isolado em quarentena (permissões 000).
+- /sistema/logs/app.log       : [ALERTA] Hash do bloco difere do registro oficial!
+  Resultado: Possível modificação direta não autorizada no bloco do disco.
+  Ação     : Arquivo isolado em quarentena (permissões 000).
+- /sistema/config.sys         : [OK - Íntegro]
+```
+
+Testes da Etapa 3:
+
+```bash
+javac -d out src/fsim/*.java test/fsim/*.java
+java -ea -cp out fsim.SecurityTest
+```
+
 ## Estrutura
 
 ```
-src/fsim/Main.java                 ponto de entrada (CLI / roteiros)
-src/fsim/Shell.java                interpretador de comandos e demos
-src/fsim/FileSystem.java           árvore, caminhos, CRUD e desfragmentação
-src/fsim/Node.java                 arquivo/diretório
-src/fsim/Disk.java                 disco lógico em blocos (usa o arranjo RAID)
-src/fsim/Allocator.java            base das estratégias de alocação
-src/fsim/ContiguousAllocator.java  alocação contígua
-src/fsim/FatAllocator.java         alocação encadeada (FAT)
-src/fsim/IndexedAllocator.java     alocação indexada (i-node)
-src/fsim/Report.java               árvore, mapas e relatório de fragmentação
-src/fsim/RaidArray.java            arranjo RAID 0/1/4/5 e reconstrução
-src/fsim/PhysicalDisk.java         disco físico: blocos, cabeça e fila de E/S
-src/fsim/IoRequest.java            requisição de E/S (operação e trilha)
-src/fsim/ArmScheduler.java         escalonamento do braço (FCFS, SSTF, SCAN, C-SCAN)
-src/fsim/FlashSim.java             SSD: FTL, coleta de lixo e balanceamento de desgaste
-test/fsim/IoTest.java              testes da Etapa 2
-exemplos/                          roteiros de demonstração
+src/fsim/Main.java                           ponto de entrada (CLI / roteiros)
+src/fsim/Shell.java                          interpretador de comandos e demos
+src/fsim/FileSystem.java                     árvore, caminhos, CRUD, mediação de segurança e desfragmentação
+src/fsim/Node.java                           arquivo/diretório e metadados de proteção (POSIX, ACL e criptografia)
+src/fsim/Disk.java                           disco lógico em blocos (usa o arranjo RAID)
+src/fsim/Allocator.java                      base das estratégias de alocação
+src/fsim/ContiguousAllocator.java            alocação contígua
+src/fsim/FatAllocator.java                   alocação encadeada (FAT)
+src/fsim/IndexedAllocator.java               alocação indexada (i-node)
+src/fsim/Report.java                         árvore, mapas, fragmentação e relatórios de segurança/auditoria
+src/fsim/Units.java                          conversão e formatação de tamanhos (base 1024) e alinhamento
+src/fsim/RaidArray.java                      arranjo RAID 0/1/4/5 e reconstrução
+src/fsim/PhysicalDisk.java                   disco físico: blocos, cabeça e fila de E/S
+src/fsim/IoRequest.java                      requisição de E/S (operação e trilha)
+src/fsim/ArmScheduler.java                   escalonamento do braço (FCFS, SSTF, SCAN, C-SCAN)
+src/fsim/FlashSim.java                       SSD: FTL, coleta de lixo e balanceamento de desgaste
+src/fsim/AuditLog.java                       trilha cronológica de auditoria de segurança em memória
+src/fsim/AuthManager.java                    usuários, grupos, hash SHA-256 + salt, modos dual e sudo
+src/fsim/AccessControl.java                  avaliação da matriz POSIX (rwx) e ACL estendida
+src/fsim/CryptoEngine.java                   criptografia simétrica em repouso (AES-256-CTR + HMAC-SHA256)
+src/fsim/IntegrityMonitor.java               hashes SHA-256 por bloco, varredura de malware e quarentena
+src/fsim/FSException.java                    exceção base de erros exibidos ao usuário
+src/fsim/DiskFullException.java              erro de falta de blocos livres no disco
+src/fsim/ExternalFragmentationException.java erro de espaço livre disperso na alocação contígua
+src/fsim/AccessDeniedException.java          erro de negação de acesso pela matriz de permissões / ACL
+test/fsim/IoTest.java                        testes da Etapa 2 (escalonamento, RAID, SSD e E/S)
+test/fsim/SecurityTest.java                  testes da Etapa 3 (segurança, proteção, criptografia e demos)
 ```
