@@ -1,6 +1,7 @@
 package fsim;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -8,7 +9,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** Renderização textual: árvore, mapa de blocos, mapa gráfico e relatório de fragmentação. */
+/** Renderização textual: árvore, mapas de blocos, fragmentação e relatórios de segurança e auditoria. */
 final class Report {
     private static final String SYMBOLS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     private static final int[] COLORS = {32, 34, 35, 36, 33, 92, 94, 95, 96, 93, 31, 91};
@@ -28,7 +29,7 @@ final class Report {
             if (!enabled || codes.length == 0) {
                 return text;
             }
-            String seq = java.util.Arrays.stream(codes).mapToObj(String::valueOf).collect(Collectors.joining(";"));
+            String seq = Arrays.stream(codes).mapToObj(String::valueOf).collect(Collectors.joining(";"));
             return "\033[" + seq + "m" + text + "\033[0m";
         }
     }
@@ -74,11 +75,12 @@ final class Report {
         for (int i = 0; i < kids.size(); i++) {
             Node child = kids.get(i);
             boolean last = i == kids.size() - 1;
+            boolean denied = child.isDir && !AccessControl.hasPermission(child, fs.auth, AccessControl.Action.READ);
             String label = child.isDir
-                    ? child.name + "/ [DIR]"
+                    ? child.name + "/ [DIR]" + (denied ? " [acesso negado]" : "")
                     : child.name + " (" + Units.fmtSize(child.size) + ") [ARQ]";
             lines.add(prefix + (last ? "└── " : "├── ") + label);
-            if (child.isDir) {
+            if (child.isDir && !denied) {
                 treeRec(fs, child, prefix + (last ? "    " : "│   "), lines);
             }
         }
@@ -273,5 +275,117 @@ final class Report {
         parts.add("");
         parts.add(fragmentation(fs, details));
         return String.join("\n", parts);
+    }
+
+    // --------------------------------------------------------------- segurança
+    static String aclDenied(AccessDeniedException e) {
+        return String.join("\n",
+                "[SISTEMA DE SEGURANÇA - VERIFICAÇÃO DE ACL]",
+                "Objeto      : " + e.path,
+                "Proprietário: " + e.owner + " (Grupo: " + e.ownerGroup + ")",
+                "Permissões  : " + e.permissions,
+                "Ação Pedida : " + e.actionLabel + " por '" + e.user + "' (Grupo: " + e.userGroup + ")",
+                "",
+                "[NEGADO]: O usuário '" + e.user + "' não possui permissão de " + e.actionNoun
+                        + " no objeto '" + e.path + "'.",
+                "Tentativa não autorizada registrada nos logs do sistema.");
+    }
+
+    static String aclDetails(Node node) {
+        List<String> lines = new ArrayList<>();
+        lines.add("[LISTA DE CONTROLE DE ACESSO (ACL)]");
+        lines.add("Objeto      : " + node.path());
+        lines.add("Proprietário: " + node.owner);
+        lines.add("Grupo       : " + node.group);
+        lines.add("Modo POSIX  : " + AccessControl.formatPermissions(node));
+        lines.add("user::" + AccessControl.formatBits((node.mode >> 6) & 7));
+        for (Map.Entry<String, Integer> entry : node.userAcl.entrySet()) {
+            lines.add("user:" + entry.getKey() + ":" + AccessControl.formatBits(entry.getValue()));
+        }
+        lines.add("group::" + AccessControl.formatBits((node.mode >> 3) & 7));
+        for (Map.Entry<String, Integer> entry : node.groupAcl.entrySet()) {
+            lines.add("group:" + entry.getKey() + ":" + AccessControl.formatBits(entry.getValue()));
+        }
+        lines.add("other::" + AccessControl.formatBits(node.mode & 7));
+        return String.join("\n", lines);
+    }
+
+    static String integrityScan(IntegrityMonitor.ScanReport report) {
+        List<String> lines = new ArrayList<>();
+        lines.add("[MÓDULO DE SEGURANÇA - VARREDURA DE INTEGRIDADE]");
+        lines.add("Analisando " + report.totalFiles()
+                + " arquivos em busca de assinaturas maliciosas e hashes corrompidos...");
+        if (report.findings().isEmpty()) {
+            lines.add("(nenhum arquivo encontrado para análise)");
+            return String.join("\n", lines);
+        }
+        int pad = Math.max(24, report.findings().stream()
+                .mapToInt(f -> f.node().path().length())
+                .max()
+                .orElse(0));
+        for (IntegrityMonitor.FileFinding f : report.findings()) {
+            String prefix = String.format(Locale.ROOT, "- %-" + pad + "s  : ", f.node().path());
+            switch (f.status()) {
+                case OK -> lines.add(prefix + "[OK - Íntegro]");
+                case OK_ENCRYPTED -> lines.add(prefix + "[OK - Criptografado e Íntegro]");
+                case TAMPERED -> {
+                    lines.add(prefix + "[ALERTA] Hash do bloco difere do registro oficial!");
+                    lines.add("  Resultado: Possível modificação direta não autorizada no bloco do disco.");
+                    if (f.quarantined()) {
+                        lines.add("  Ação     : Arquivo isolado em quarentena (permissões 000).");
+                    }
+                }
+                case MALWARE -> {
+                    lines.add(prefix + "[AMEAÇA] Assinatura maliciosa detectada: '" + f.signature() + "'!");
+                    lines.add("  Resultado: Conteúdo malicioso identificado no arquivo.");
+                    if (f.quarantined()) {
+                        lines.add("  Ação     : Arquivo isolado em quarentena (permissões 000).");
+                    }
+                }
+            }
+        }
+        return String.join("\n", lines);
+    }
+
+    static String auditLog(List<AuditLog.Entry> entries) {
+        List<String> lines = new ArrayList<>();
+        lines.add("[LOG DE AUDITORIA DE SEGURANÇA]");
+        if (entries.isEmpty()) {
+            lines.add("(nenhum evento registrado)");
+            return String.join("\n", lines);
+        }
+        int catPad = Math.max(12, entries.stream().mapToInt(e -> e.category().length()).max().orElse(12));
+        for (AuditLog.Entry e : entries) {
+            lines.add(String.format(Locale.ROOT, "#%03d [%-" + catPad + "s] %s (%s) : %s",
+                    e.id(), e.category(), e.user(), e.mode(), e.detail()));
+        }
+        return String.join("\n", lines);
+    }
+
+    static String usersTable(AuthManager auth) {
+        List<String> lines = new ArrayList<>();
+        lines.add("[USUÁRIOS E GRUPOS CADASTRADOS]");
+        lines.add("Grupos: " + String.join(", ", auth.groups()));
+        int namePad = Math.max(8, auth.users().stream().mapToInt(u -> u.name().length()).max().orElse(8));
+        int grpPad = Math.max(6, auth.users().stream().mapToInt(u -> u.primaryGroup().length()).max().orElse(6));
+        int extraPad = Math.max(6, auth.users().stream()
+                .mapToInt(u -> u.extraGroups().isEmpty() ? 1 : String.join(",", u.extraGroups()).length())
+                .max()
+                .orElse(6));
+        for (AuthManager.User u : auth.users()) {
+            String extras = u.extraGroups().isEmpty() ? "-" : String.join(",", u.extraGroups());
+            String mode = u.superuser() ? AuthManager.Mode.MODO_KERNEL.name() : AuthManager.Mode.MODO_USUARIO.name();
+            String saltPrefix = prefixHex(u.saltHex(), 8);
+            String hashPrefix = prefixHex(u.hashHex(), 12);
+            lines.add(String.format(Locale.ROOT,
+                    "  %-" + namePad + "s | grupo: %-" + grpPad + "s | extras: %-" + extraPad
+                            + "s | %-12s | salt: %s | sha256: %s",
+                    u.name(), u.primaryGroup(), extras, mode, saltPrefix, hashPrefix));
+        }
+        return String.join("\n", lines);
+    }
+
+    private static String prefixHex(String hex, int len) {
+        return hex.length() <= len ? hex : hex.substring(0, len) + "...";
     }
 }
