@@ -255,16 +255,38 @@ final class MemoryReport {
     }
 
     static String processTable(MemoryManager mm, int pageSize) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(String.format(Locale.ROOT, "%-5s %-22s %-10s %-10s %-10s %-8s %-10s %-6s%n",
-                "PID", "NOME", "TIPO", "DONO", "TAMANHO", "PÁGINAS", "RESIDENTES", "SWAP"));
-        sb.append("-".repeat(85)).append("\n");
+        boolean hasCpu = false;
         for (SimProcess p : mm.processes()) {
-            String numPagesStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.numPages());
-            String resStr = p.type == SimProcess.Type.CRITICAL ? "FIXO" : String.valueOf(p.residentCount());
-            String swapStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.swappedCount());
-            sb.append(String.format(Locale.ROOT, "%-5d %-22s %-10s %-10s %-10s %-8s %-10s %-6s%n",
-                    p.pid, p.name, p.type.label, p.owner, Units.fmtSize(p.sizeBytes), numPagesStr, resStr, swapStr));
+            if (p.cpuConfigured) {
+                hasCpu = true;
+                break;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        if (!hasCpu) {
+            sb.append(String.format(Locale.ROOT, "%-5s %-22s %-10s %-10s %-10s %-8s %-10s %-6s%n",
+                    "PID", "NOME", "TIPO", "DONO", "TAMANHO", "PÁGINAS", "RESIDENTES", "SWAP"));
+            sb.append("-".repeat(85)).append("\n");
+            for (SimProcess p : mm.processes()) {
+                String numPagesStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.numPages());
+                String resStr = p.type == SimProcess.Type.CRITICAL ? "FIXO" : String.valueOf(p.residentCount());
+                String swapStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.swappedCount());
+                sb.append(String.format(Locale.ROOT, "%-5d %-22s %-10s %-10s %-10s %-8s %-10s %-6s%n",
+                        p.pid, p.name, p.type.label, p.owner, Units.fmtSize(p.sizeBytes), numPagesStr, resStr, swapStr));
+            }
+        } else {
+            sb.append(String.format(Locale.ROOT, "%-5s %-18s %-9s %-11s %-12s %-10s %-9s %-8s %-10s %-6s%n",
+                    "PID", "NOME", "TIPO", "ESTADO", "PRIORIDADE", "DONO", "TAMANHO", "PÁGINAS", "RESIDENTES", "SWAP"));
+            sb.append("-".repeat(103)).append("\n");
+            for (SimProcess p : mm.processes()) {
+                String numPagesStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.numPages());
+                String resStr = p.type == SimProcess.Type.CRITICAL ? "FIXO" : String.valueOf(p.residentCount());
+                String swapStr = p.type == SimProcess.Type.CRITICAL ? "-" : String.valueOf(p.swappedCount());
+                String stateStr = p.systemBase ? "FIXO" : (p.state != null ? p.state.label : "-");
+                String prioStr = p.cpuConfigured ? (p.priority + " (" + p.priorityLabel() + ")") : "-";
+                sb.append(String.format(Locale.ROOT, "%-5d %-18s %-9s %-11s %-12s %-10s %-9s %-8s %-10s %-6s%n",
+                        p.pid, p.name, p.type.label, stateStr, prioStr, p.owner, Units.fmtSize(p.sizeBytes), numPagesStr, resStr, swapStr));
+            }
         }
         return sb.toString().stripTrailing();
     }

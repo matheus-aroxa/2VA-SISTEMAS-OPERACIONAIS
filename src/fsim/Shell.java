@@ -47,7 +47,7 @@ final class Shell {
               format [--strategy contigua|encadeada|indexada] [--block-size 4KB] [--blocks 16] [--fit first|best|worst]
                      [--raid 0|1|4|5] [--disks N]
                                                formata o disco (apaga tudo)
-              demo [indexada|contigua|encadeada|raid5|seguranca|memoria]
+              demo [indexada|contigua|encadeada|raid5|seguranca|memoria|processos]
                                                executa um cenário de demonstração
 
             E/S e arranjo RAID
@@ -107,6 +107,23 @@ final class Shell {
               page_sim [--frames N] [--refs R] [--policy P|ALL] [--steps]
                                                simula algoritmos de substituição (inclui Ótimo)
               memwatch <N|off>                 monitor periódico a cada N operações de memória
+
+            Processos e escalonamento de CPU
+              create_process [--name N] [--burst B] [--priority P] [--syscall S] [--arrival A] [--pages P1,P2]
+                                               cria processo com perfil de CPU e memória (apelido: proc_create)
+              run_simulation --process <N|PID> --steps <N> [--pages P1,P2]
+                                               executa N passos de instrução com CPU, memória e syscalls (apelido: sim_run)
+              schedule [--algorithm Priority_RR|RR|Priority|FCFS] [--quantum Q]
+                                               escalona processos na CPU com métricas de desempenho (apelido: cpu_sched)
+              process_status <N|PID>           exibe PCB completo, ciclo de vida e threads (apelido: pcb)
+              sched_reset                      reinicia contadores e estado de execução dos processos
+              create_thread <proc> <nome> [--lock M --at X] [--hold H] [--unlock M --at X]
+                                               cria thread concorrente com agendamento de mutex (apelido: thread_create)
+              mutex_lock <proc> <thread> <mutex>
+                                               solicita aquisição manual de mutex por uma thread
+              mutex_unlock <proc> <thread> <mutex>
+                                               solicita liberação manual de mutex por uma thread
+              mutex_status                     exibe estado, dono e filas de espera de todos os mutexes (apelido: mutexes)
 
             Outros
               echo <texto>  |  help  |  exit""";
@@ -215,6 +232,15 @@ final class Shell {
                 "execute_step --process ProcB --page 1",
                 "memory_status --virtual --details",
                 "page_sim --frames 3 --refs 7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1 --policy ALL"));
+        DEMOS.put("processos", List.of(
+                "format --strategy indexada --block-size 4KB --blocks 16",
+                "create_process --name App_Web --burst 8ms --priority 1 --syscall \"read_disk at 3ms (duration: 4ms)\" --pages 2,7,4",
+                "create_process --name App_Render --burst 5ms --priority 2 --syscall random",
+                "create_process --name App_Batch --burst 4ms --priority 1",
+                "run_simulation --process App_Web --steps 3",
+                "create_thread App_Render T2 --lock Buffer_Video --at 5ms",
+                "create_thread App_Render T1 --lock Buffer_Video --at 4ms --hold 3ms",
+                "schedule --algorithm Priority_RR --quantum 2ms"));
     }
 
     private final FileSystem fs;
@@ -308,6 +334,20 @@ final class Shell {
         commands.put("mem_policy", this::pagePolicy);
         commands.put("page_sim", this::pageSim);
         commands.put("memwatch", this::memwatch);
+        commands.put("run_simulation", this::runSimulation);
+        commands.put("sim_run", this::runSimulation);
+        commands.put("schedule", this::schedule);
+        commands.put("cpu_sched", this::schedule);
+        commands.put("process_status", this::processStatus);
+        commands.put("pcb", this::processStatus);
+        commands.put("sched_reset", this::schedReset);
+        commands.put("create_thread", this::createThread);
+        commands.put("thread_create", this::createThread);
+        commands.put("mutex_lock", this::mutexLock);
+        commands.put("mutex_unlock", this::mutexUnlock);
+        commands.put("mutex_status", this::mutexStatus);
+        commands.put("mutexes", this::mutexStatus);
+        commands.put("threads", this::mutexStatus);
     }
 
     // ------------------------------------------------------------- execução
@@ -843,6 +883,21 @@ final class Shell {
         }
     }
 
+    private static long parseMs(String text, long defaultVal) {
+        if (text == null || text.isBlank()) {
+            return defaultVal;
+        }
+        String s = text.trim().toLowerCase(Locale.ROOT);
+        if (s.endsWith("ms")) {
+            s = s.substring(0, s.length() - 2).trim();
+        }
+        try {
+            return Long.parseLong(s);
+        } catch (NumberFormatException e) {
+            throw new FSException("valor de tempo inválido: '" + text + "' (esperado: número ou Xms)");
+        }
+    }
+
     // --------------------------------------------------- segurança e proteção
     private void login(List<String> args) {
         Parsed p = opts(args, Set.of("--user", "-u", "--password"), Set.of());
@@ -1078,25 +1133,50 @@ final class Shell {
 
     // ---------------------------------------------------------------- memória
     private void createProcess(List<String> args) {
-        Parsed p = opts(args, Set.of("--name", "--size", "--file", "--type"), Set.of());
+        Parsed p = opts(args, Set.of("--name", "--size", "--file", "--type",
+                "--burst", "--priority", "--syscall", "--arrival", "--pages"), Set.of());
         String name = p.opts().get("--name");
         if (name == null && !p.pos().isEmpty()) {
             name = p.pos().get(0);
         }
         if (name == null || name.isBlank()) {
-            throw new FSException("uso: create_process [--name <nome> | <nome>] [--size <tam>] [--file <arq>] [--type critical|normal]");
+            throw new FSException("uso: create_process [--name <nome> | <nome>] [--size <tam>] [--file <arq>] [--type critical|normal] [--burst <ms>] [--priority <P>] [--syscall <spec>] [--arrival <ms>] [--pages P1,P2...]");
         }
         SimProcess.Type type = SimProcess.Type.parse(p.opts().getOrDefault("--type", "normal"));
         Long size = p.opts().containsKey("--size") ? Units.parseSize(p.opts().get("--size")) : null;
         String file = p.opts().get("--file");
-        SimProcess proc = fs.memory.createProcess(fs, name, type, size, file);
-        if (proc.type == SimProcess.Type.CRITICAL) {
-            ReservedArena.Segment seg = fs.memory.reserved.segmentOf(proc);
-            out.println("[CRIAÇÃO DE PROCESSO CRÍTICO] Processo '" + proc.name + "' criado (PID " + proc.pid
-                    + ", " + Units.fmtSize(proc.sizeBytes) + ").");
-            out.println(MemoryReport.criticalCreated(proc, seg));
+
+        boolean hasCpu = p.opts().containsKey("--burst") || p.opts().containsKey("--priority")
+                || p.opts().containsKey("--syscall") || p.opts().containsKey("--arrival")
+                || p.opts().containsKey("--pages");
+
+        if (hasCpu) {
+            long burst = p.opts().containsKey("--burst") ? parseMs(p.opts().get("--burst"), 5L) : 5L;
+            Integer priority = p.opts().containsKey("--priority") ? count(p.opts().get("--priority")) : null;
+            long arrival = p.opts().containsKey("--arrival") ? parseMs(p.opts().get("--arrival"), 0L) : 0L;
+            String syscallSpec = p.opts().get("--syscall");
+            List<Integer> pages = null;
+            if (p.opts().containsKey("--pages")) {
+                pages = new ArrayList<>();
+                for (String s : p.opts().get("--pages").split("[,\\s]+")) {
+                    if (!s.isBlank()) {
+                        pages.add(count(s.trim()));
+                    }
+                }
+            }
+            MemoryManager.CpuProcessSpec spec = new MemoryManager.CpuProcessSpec(burst, priority, arrival, syscallSpec, pages);
+            SimProcess proc = fs.memory.createScheduledProcess(fs, name, type, size, file, spec);
+            out.println(ProcessReport.processCreated(proc));
         } else {
-            out.println(MemoryReport.normalCreated(proc, fs.memory.paged.pageSize));
+            SimProcess proc = fs.memory.createProcess(fs, name, type, size, file);
+            if (proc.type == SimProcess.Type.CRITICAL) {
+                ReservedArena.Segment seg = fs.memory.reserved.segmentOf(proc);
+                out.println("[CRIAÇÃO DE PROCESSO CRÍTICO] Processo '" + proc.name + "' criado (PID " + proc.pid
+                        + ", " + Units.fmtSize(proc.sizeBytes) + ").");
+                out.println(MemoryReport.criticalCreated(proc, seg));
+            } else {
+                out.println(MemoryReport.normalCreated(proc, fs.memory.paged.pageSize));
+            }
         }
     }
 
@@ -1268,6 +1348,137 @@ final class Shell {
         } else {
             out.println("Monitor periódico de memória desativado.");
         }
+    }
+
+    // ------------------------------------------------- processos e escalonamento
+    private void runSimulation(List<String> args) {
+        Parsed p = opts(args, Set.of("--process", "--steps", "--pages"), Set.of());
+        String procRef = p.opts().get("--process");
+        String stepsStr = p.opts().get("--steps");
+        if (procRef == null && !p.pos().isEmpty()) {
+            procRef = p.pos().get(0);
+            if (stepsStr == null && p.pos().size() > 1) {
+                stepsStr = p.pos().get(1);
+            }
+        }
+        if (procRef == null || procRef.isBlank()) {
+            throw new FSException("uso: run_simulation --process <nome|PID> --steps <N> [--pages P1,P2,...]");
+        }
+        int steps = stepsStr != null ? count(stepsStr) : 1;
+        List<Integer> pages = null;
+        if (p.opts().containsKey("--pages")) {
+            pages = new ArrayList<>();
+            for (String s : p.opts().get("--pages").split("[,\\s]+")) {
+                if (!s.isBlank()) {
+                    pages.add(count(s.trim()));
+                }
+            }
+        }
+        CpuScheduler.SimulationResult sim = fs.scheduler.runSimulation(fs, procRef, steps, pages);
+        out.println(ProcessReport.simulationReport(sim, fs.memory.paged, pal));
+    }
+
+    private void schedule(List<String> args) {
+        Parsed p = opts(args, Set.of("--algorithm", "--quantum"), Set.of());
+        String algStr = p.opts().get("--algorithm");
+        if (algStr == null && !p.pos().isEmpty()) {
+            algStr = p.pos().get(0);
+            if (!p.opts().containsKey("--quantum") && p.pos().size() > 1) {
+                p.opts().put("--quantum", p.pos().get(1));
+            }
+        }
+        CpuScheduler.Algorithm alg = algStr != null ? CpuScheduler.Algorithm.parse(algStr) : CpuScheduler.Algorithm.PRIORITY_RR;
+        long quantum = p.opts().containsKey("--quantum")
+                ? parseMs(p.opts().get("--quantum"), CpuScheduler.DEFAULT_QUANTUM_MS)
+                : CpuScheduler.DEFAULT_QUANTUM_MS;
+        CpuScheduler.ScheduleResult res = fs.scheduler.schedule(fs, alg, quantum);
+        out.println(ProcessReport.scheduleReport(res));
+    }
+
+    private void processStatus(List<String> args) {
+        Parsed p = opts(args, Set.of("--process"), Set.of());
+        String ref = p.opts().get("--process");
+        if (ref == null && !p.pos().isEmpty()) {
+            ref = p.pos().get(0);
+        }
+        if (ref == null || ref.isBlank()) {
+            throw new FSException("uso: process_status <nome|PID> [--process <N>]");
+        }
+        SimProcess proc = fs.memory.findProcess(ref);
+        out.println(ProcessReport.processStatus(proc));
+    }
+
+    private void schedReset(List<String> args) {
+        fs.scheduler.resetAllProcesses(fs);
+        out.println("Execução e contadores dos processos reiniciados.");
+    }
+
+    private void createThread(List<String> args) {
+        Parsed p = opts(args, Set.of("--lock", "--at", "--hold", "--unlock"), Set.of());
+        if (p.pos().size() < 2) {
+            throw new FSException("uso: create_thread <processo> <nome_thread> [--lock <mutex> --at <ms>] [--hold <ms>] [--unlock <mutex> --at <ms>]");
+        }
+        String procRef = p.pos().get(0);
+        String threadName = p.pos().get(1);
+        SimProcess proc = fs.memory.findProcess(procRef);
+        SimThread thread = proc.findThread(threadName);
+        if (thread == null) {
+            thread = proc.addThread(threadName);
+        }
+        if (p.opts().containsKey("--lock")) {
+            String mutex = p.opts().get("--lock");
+            long atMs = parseMs(p.opts().get("--at"), 0L);
+            long holdMs = parseMs(p.opts().get("--hold"), 0L);
+            thread.scheduleLock(mutex, atMs, holdMs);
+        }
+        if (p.opts().containsKey("--unlock")) {
+            String mutex = p.opts().get("--unlock");
+            long atMs = parseMs(p.opts().get("--at"), 0L);
+            thread.scheduleUnlock(mutex, atMs);
+        }
+        out.println("Thread '" + thread.name + "' (TID " + thread.tid + ") registrada no processo '" + proc.name + "'.");
+    }
+
+    private void mutexLock(List<String> args) {
+        need(args, 3, "mutex_lock <processo> <thread> <mutex>");
+        SimProcess proc = fs.memory.findProcess(args.get(0));
+        SimThread t = proc.findThread(args.get(1));
+        if (t == null) {
+            throw new FSException("thread não encontrada: '" + args.get(1) + "' no processo '" + proc.name + "'");
+        }
+        String mutexName = args.get(2);
+        MutexManager.LockEvent ev = fs.mutexes.lock(t, mutexName, fs.scheduler.clockMs);
+        if (ev.succeeded()) {
+            out.println("Lock adquirido pela Thread '" + t.name + "' no Mutex '" + mutexName + "'.");
+        } else {
+            String holder = ev.holder() != null ? ev.holder().name : "outra thread";
+            out.println("Mutex '" + mutexName + "' ocupado por '" + holder + "'. Thread '" + t.name + "' bloqueada.");
+        }
+    }
+
+    private void mutexUnlock(List<String> args) {
+        need(args, 3, "mutex_unlock <processo> <thread> <mutex>");
+        SimProcess proc = fs.memory.findProcess(args.get(0));
+        SimThread t = proc.findThread(args.get(1));
+        if (t == null) {
+            throw new FSException("thread não encontrada: '" + args.get(1) + "' no processo '" + proc.name + "'");
+        }
+        String mutexName = args.get(2);
+        MutexManager.LockEvent ev = fs.mutexes.unlock(t, mutexName, fs.scheduler.clockMs);
+        if (ev.succeeded()) {
+            if (ev.wokenThread() != null) {
+                out.println("Mutex '" + mutexName + "' liberado por '" + t.name + "'. Posse transferida para '"
+                        + ev.wokenThread().name + "'.");
+            } else {
+                out.println("Mutex '" + mutexName + "' liberado por '" + t.name + "'. Mutex agora LIVRE.");
+            }
+        } else {
+            out.println("Falha ao liberar mutex '" + mutexName + "': a thread '" + t.name + "' não é a dona atual.");
+        }
+    }
+
+    private void mutexStatus(List<String> args) {
+        out.println(ProcessReport.mutexStatus(fs.mutexes));
     }
 
     // ------------------------------------------------------------ auxiliares
