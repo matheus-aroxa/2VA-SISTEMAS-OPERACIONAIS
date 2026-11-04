@@ -40,6 +40,7 @@ final class PagedMemory {
 
     final byte[][] frames;
     final FrameInfo[] frameTable;
+    final String[] lastFrameStatus;
     final Map<SimProcess, byte[]> processBackingData = new HashMap<>();
     int clockHand = 0;
     long currentClockMs = 0L;
@@ -56,6 +57,7 @@ final class PagedMemory {
         this.policy = policy != null ? policy : PageReplacer.Policy.LRU;
         this.frames = new byte[numFrames][pageSize];
         this.frameTable = new FrameInfo[numFrames];
+        this.lastFrameStatus = new String[numFrames];
         this.swap = new SwapSpace(pageSize);
     }
 
@@ -123,12 +125,14 @@ final class PagedMemory {
         long vaddr = (long) logicalPage * pageSize + offset;
         if (pe.present) {
             currentClockMs += CLOCK_STEP_MS;
+
             pe.lastAccessMs = currentClockMs;
             pe.referenced = true;
             pe.accessCount++;
             hits++;
             frameTable[pe.frame] = new FrameInfo(pe.frame, process, logicalPage, true, pe.modified,
                     pe.loadedAtMs, currentClockMs, pe.accessCount);
+            lastFrameStatus[pe.frame] = "HIT";
             long paddr = (long) pe.frame * pageSize + offset;
             return new Translation(process, logicalPage, offset, vaddr, true, pe.frame, paddr, false, -1);
         }
@@ -142,7 +146,13 @@ final class PagedMemory {
     }
 
     AccessResult accessPage(SimProcess process, int logicalPage, String instruction, boolean writeOp, RaidArray array) {
-        currentClockMs += CLOCK_STEP_MS;
+        return accessPageAt(process, logicalPage, instruction, writeOp, array, currentClockMs + CLOCK_STEP_MS);
+    }
+
+    AccessResult accessPageAt(SimProcess process, int logicalPage, String instruction, boolean writeOp,
+                              RaidArray array, long explicitClockMs) {
+        currentClockMs = explicitClockMs;
+
         if (process == null) {
             throw new FSException("processo não informado");
         }
@@ -165,6 +175,7 @@ final class PagedMemory {
             }
             frameTable[pe.frame] = new FrameInfo(pe.frame, process, logicalPage, true, pe.modified,
                     pe.loadedAtMs, currentClockMs, pe.accessCount);
+            lastFrameStatus[pe.frame] = "HIT";
             return new AccessResult(process, logicalPage, instruction, writeOp, true, pe.frame,
                     false, -1, false, policy, null);
         }
@@ -249,6 +260,12 @@ final class PagedMemory {
         frameTable[targetFrame] = new FrameInfo(targetFrame, process, logicalPage, true, writeOp,
                 currentClockMs, currentClockMs, 1);
 
+        if (!restored) {
+            lastFrameStatus[targetFrame] = "PAGE FAULT (NEW)";
+        } else {
+            lastFrameStatus[targetFrame] = "PAGE FAULT (SWAP)";
+        }
+
         return new AccessResult(process, logicalPage, instruction, writeOp, false, targetFrame,
                 restored, oldSwapSlot, ramFull, policy, eviction);
     }
@@ -325,6 +342,7 @@ final class PagedMemory {
             if (frameTable[f] != null && frameTable[f].owner() == process) {
                 Arrays.fill(frames[f], (byte) 0);
                 frameTable[f] = null;
+                lastFrameStatus[f] = null;
                 freedFrames++;
             }
         }
@@ -385,11 +403,20 @@ final class PagedMemory {
         }
     }
 
+    String frameStatus(int frame) {
+        if (frame < 0 || frame >= numFrames) {
+            return "-";
+        }
+        String st = lastFrameStatus[frame];
+        return st != null ? st : (frameTable[frame] != null ? "PRESENTE" : "LIVRE");
+    }
+
     void reset() {
         for (int f = 0; f < numFrames; f++) {
             Arrays.fill(frames[f], (byte) 0);
             frameTable[f] = null;
         }
+        Arrays.fill(lastFrameStatus, null);
         processBackingData.clear();
         clockHand = 0;
         currentClockMs = 0L;

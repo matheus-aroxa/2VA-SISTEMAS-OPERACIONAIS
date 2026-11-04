@@ -18,6 +18,10 @@ final class MemoryManager {
     static final long DEFAULT_KERNEL_BASE_BYTES = 1024L * 1024;  // 1 MB
     static final long DEFAULT_DYNAMIC_BYTES = 64L * 1024;        // 64 KB
     static final int DEFAULT_PAGE_SIZE = 4096;                   // 4 KB
+    static final long DEFAULT_NORMAL_PROC_BYTES = 32L * 1024;    // 32 KB (8 páginas de 4 KB: P0..P7)
+    static final long DEFAULT_CRITICAL_PROC_BYTES = 512L * 1024; // 512 KB na Área Reservada
+
+    record CpuProcessSpec(long burstMs, Integer priority, long arrivalMs, String syscallSpec, List<Integer> pages) {}
 
     private static final Pattern PAGE_PATTERN = Pattern.compile("(?i)(?:página|pagina|page)\\s*(\\d+)");
     private static final Pattern NUMBER_PATTERN = Pattern.compile("\\b(\\d+)\\b");
@@ -58,6 +62,12 @@ final class MemoryManager {
         this.reserved = new ReservedArena(reservedBytes, kBase, fit != null ? fit : "first");
         int frames = (int) (dynamicBytes / pageSize);
         this.paged = new PagedMemory(pageSize, frames, policy != null ? policy : PageReplacer.Policy.LRU);
+        if (fs.mutexes != null) {
+            fs.mutexes.reset();
+        }
+        if (fs.scheduler != null) {
+            fs.scheduler.reset();
+        }
         fs.audit.record("MEMORIA", fs.auth.currentUser().name(), fs.auth.mode().name(),
                 "memória reconfigurada: reservada=" + Units.fmtSize(reservedBytes)
                         + ", dinamica=" + Units.fmtSize(dynamicBytes) + ", pagina=" + pageSize);
@@ -116,6 +126,38 @@ final class MemoryManager {
         return proc;
     }
 
+    SimProcess createScheduledProcess(FileSystem fs, String name, SimProcess.Type type,
+                                      Long sizeBytes, String filePath, CpuProcessSpec cpuSpec) {
+        if (sizeBytes == null && filePath == null) {
+            sizeBytes = (type == SimProcess.Type.CRITICAL) ? DEFAULT_CRITICAL_PROC_BYTES : DEFAULT_NORMAL_PROC_BYTES;
+        }
+        if (cpuSpec != null) {
+            if (cpuSpec.burstMs() <= 0) {
+                throw new FSException("tempo de burst da CPU deve ser positivo");
+            }
+            if (cpuSpec.arrivalMs() < 0) {
+                throw new FSException("tempo de chegada não pode ser negativo");
+            }
+        }
+        SimProcess proc = createProcess(fs, name, type, sizeBytes, filePath);
+        if (cpuSpec != null) {
+            try {
+                List<SimProcess.SyscallEvent> syscalls = SimProcess.SyscallEvent.parseSpec(
+                        cpuSpec.syscallSpec(), cpuSpec.burstMs(), proc.pid);
+                int prio = cpuSpec.priority() != null ? cpuSpec.priority() : 2;
+                proc.configureCpu(cpuSpec.burstMs(), prio, cpuSpec.arrivalMs(), syscalls,
+                        "random".equalsIgnoreCase(cpuSpec.syscallSpec()),
+                        cpuSpec.pages(), paged.clockMs());
+                fs.audit.record("PROCESSO", fs.auth.currentUser().name(), fs.auth.mode().name(),
+                        "processo configurado para CPU: burst=" + cpuSpec.burstMs() + "ms, prioridade=" + proc.priority);
+            } catch (RuntimeException e) {
+                terminateProcess(fs, String.valueOf(proc.pid));
+                throw e;
+            }
+        }
+        return proc;
+    }
+
     TerminationResult terminateProcess(FileSystem fs, String nameOrPid) {
         SimProcess proc = findProcess(nameOrPid);
         if (proc.systemBase) {
@@ -123,6 +165,9 @@ final class MemoryManager {
         }
         if (!fs.auth.isKernel() && !fs.auth.currentUser().name().equals(proc.owner)) {
             throw new FSException("permissão negada: apenas o proprietário ('" + proc.owner + "') ou root pode finalizar '" + proc.name + "'");
+        }
+        if (fs.mutexes != null) {
+            fs.mutexes.releaseAllOwnedBy(proc, paged.clockMs());
         }
         if (proc.type == SimProcess.Type.CRITICAL) {
             fs.auth.requireKernel("terminate_process critical");

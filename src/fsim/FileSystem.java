@@ -25,6 +25,8 @@ final class FileSystem {
     final AuthManager auth = new AuthManager(audit);
     final IntegrityMonitor integrity = new IntegrityMonitor();
     final MemoryManager memory = new MemoryManager();
+    final MutexManager mutexes = new MutexManager();
+    final CpuScheduler scheduler = new CpuScheduler();
 
     Disk disk;
     Allocator alloc;
@@ -57,6 +59,12 @@ final class FileSystem {
         cwd = root;
         integrity.reset();
         array.resetQueues(); // a formatação não conta como carga de trabalho
+        if (scheduler != null) {
+            scheduler.reset();
+        }
+        if (mutexes != null) {
+            mutexes.reset();
+        }
     }
 
     // ---------------------------------------------------------------- caminhos
