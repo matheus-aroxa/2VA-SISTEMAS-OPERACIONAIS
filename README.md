@@ -31,9 +31,10 @@ javac -d out src/fsim/*.java test/fsim/*.java
 java -ea -cp out fsim.IoTest
 java -ea -cp out fsim.SecurityTest
 java -ea -cp out fsim.MemoryTest
+java -ea -cp out fsim.ProcessTest
 ```
 
-Dentro do simulador, `demo indexada`, `demo contigua`, `demo encadeada`, `demo raid5`, `demo seguranca` e `demo memoria` executam
+Dentro do simulador, `demo indexada`, `demo contigua`, `demo encadeada`, `demo raid5`, `demo seguranca`, `demo memoria` e `demo processos` executam
 cenários prontos de demonstração, e `help` lista todos os comandos.
 
 ## Comandos
@@ -288,54 +289,32 @@ Subsistema de gerenciamento de memória principal (RAM) que implementa uma arqui
 |---|---|
 | `create_process [--name N] [--size T \| --file F] [--type critical\|normal]` | Cria processo no modelo híbrido (apelido: `proc_create`) |
 | `terminate_process <PID\|nome>` | Encerra processo e libera área reservada ou molduras/swap (apelido: `kill`) |
-| `ps` | Lista processos em execução, PID, tipo, dono, tamanho e páginas |
-| `page_table [--process N]` | Exibe a tabela de páginas, bits V/R/M, moldura física e fragmentação interna |
-| `translate_address [--process N] [--page P] [--offset O] [--vaddr V]` | Simula a MMU: calcula endereço físico e indica HIT ou Page Fault |
-| `execute_step [--process N] [--instruction I] [--page P] [--write]` | Simula ciclo do processador, trata Page Faults e descarrega swap (apelido: `step`) |
-| `memory_status [--reserved] [--virtual] [--details]` | Diagnóstico de fragmentação externa/interna e mapa das molduras (apelido: `free`) |
-| `memory_compact [--reserved]` | Compacta a área reservada eliminando lacunas de fragmentação externa |
-| `memory_format [--reserved R] [--dynamic D] [--page-size P] [--fit F] [--policy POL]` | Reconfigura a memória física, tamanho de página e política |
-| `page_policy <LRU\|SEGUNDA_CHANCE\|FIFO\|LFU>` | Altera a política de substituição de páginas da RAM dinâmica (apelido: `mem_policy`) |
-| `page_sim [--frames N] [--refs R] [--policy P\|ALL] [--steps]` | Simula e compara algoritmos de substituição de páginas (inclui Ótimo de Belady) |
-| `memwatch <N\|off>` | Ativa monitoramento periódico de memória a cada N operações |
+| `ps` | Lista processos ativos na RAM, tipo, páginas e estado (apelido: `processes`) |
+| `page_table <PID\|nome>` | Exibe tabela de páginas, bits V/R/M e slots de swap (apelido: `ptable`) |
+| `translate_address --process P (--page N [--offset D] \| --vaddr V) [--load]` | Traduz endereço lógico em físico via MMU (apelido: `mmu`) |
+| `execute_step --process P [--instruction T] [--page N] [--write]` | Simula ciclo de CPU com acesso à memória e Page Fault (apelido: `step`) |
+| `memory_status [--reserved] [--virtual] [--details]` | Diagnóstico e mapa completo da RAM física (apelido: `free`) |
+| `memory_compact [--reserved]` | Compacta blocos livres contíguos na área reservada |
+| `memory_format [--reserved T] [--dynamic T] [--page-size T] [--fit F] [--policy P]` | Reconfigura a arquitetura de memória (apelido: `mem_config`) |
+| `page_policy <LRU\|SEGUNDA_CHANCE\|FIFO\|LFU>` | Define o algoritmo ativo de substituição de páginas na RAM |
+| `page_sim [--frames N] [--refs R] [--policy P\|ALL] [--steps]` | Simulação comparativa de algoritmos de substituição |
+| `memwatch <N\|off>` | Monitor periódico automático a cada N operações de memória |
 
-Exemplo 4.1 — Área Reservada, processos críticos, fragmentação externa e compactação contígua (`demo memoria`):
+Exemplo 4.1 — Área reservada, fragmentação externa e compactação (`demo memoria`):
 
 ```
 > memory_format --reserved 4MB --dynamic 64KB --page-size 4KB --fit first
-Memória reconfigurada: Área Reservada = 4 MB (fit: first), RAM Dinâmica = 64 KB (16 molduras de 4 KB), Política = LRU.
 > create_process --name Kernel_DiskDriver --size 1MB --type critical
-[CRIAÇÃO DE PROCESSO CRÍTICO] Processo 'Kernel_DiskDriver' criado (PID 101, 1 MB).
-- Alocado de forma contígua na Área Reservada: [1.0 MB até 2.0 MB] (1 MB)
 > create_process --name Kernel_NetDriver --size 512KB --type critical
-[CRIAÇÃO DE PROCESSO CRÍTICO] Processo 'Kernel_NetDriver' criado (PID 102, 512 KB).
-- Alocado de forma contígua na Área Reservada: [2.0 MB até 2.5 MB] (512 KB)
 > create_process --name Kernel_CryptoEngine --size 512KB --type critical
-[CRIAÇÃO DE PROCESSO CRÍTICO] Processo 'Kernel_CryptoEngine' criado (PID 103, 512 KB).
-- Alocado de forma contígua na Área Reservada: [2.5 MB até 3.0 MB] (512 KB)
-> memory_status --reserved
---- MAPA DA ÁREA CRÍTICA/RESERVADA DA RAM (Total: 4.0 MB - Alocação Fixa) ---
-[0.0 MB - 1.0 MB] : Núcleo Base do SO    (1 MB)  [OCUPADO]
-[1.0 MB - 2.0 MB] : Kernel_DiskDriver    (1 MB)  [OCUPADO]
-[2.0 MB - 2.5 MB] : Kernel_NetDriver     (512 KB)  [OCUPADO]
-[2.5 MB - 3.0 MB] : Kernel_CryptoEngine  (512 KB)  [OCUPADO]
-[3.0 MB - 4.0 MB] : FRAGMENTO LIVRE 1 (1 MB)  [LIVRE - LACUNA]
-
---- DIAGNÓSTICO DE FRAGMENTAÇÃO EXTERNA ---
-Total de Memória Livre na Área Reservada : 1 MB (1.0 MB)
-Maior Bloco Contíguo Disponível          : 1 MB (1.0 MB)
-Fragmentação Externa Detectada           : NÃO
-Status: Espaço livre consolidado em bloco único.
 > terminate_process --name Kernel_NetDriver
-[ENCERRAMENTO DE PROCESSO CRÍTICO] Processo 'Kernel_NetDriver' finalizado.
-Área de 512 KB no intervalo [2.0 MB a 2.5 MB] liberada na Área Reservada da RAM.
 > memory_status --reserved
 --- MAPA DA ÁREA CRÍTICA/RESERVADA DA RAM (Total: 4.0 MB - Alocação Fixa) ---
-[0.0 MB - 1.0 MB] : Núcleo Base do SO    (1 MB)  [OCUPADO]
+[0.0 MB - 1.0 MB] : Kernel Base (Núcleo) (1 MB)  [OCUPADO]
 [1.0 MB - 2.0 MB] : Kernel_DiskDriver    (1 MB)  [OCUPADO]
-[2.0 MB - 2.5 MB] : FRAGMENTO LIVRE 1 (512 KB)  [LIVRE - LACUNA]
+[2.0 MB - 2.5 MB] : FRAGMENTO LIVRE 1    (512 KB)  [LIVRE - LACUNA]
 [2.5 MB - 3.0 MB] : Kernel_CryptoEngine  (512 KB)  [OCUPADO]
-[3.0 MB - 4.0 MB] : FRAGMENTO LIVRE 2 (1 MB)  [LIVRE - LACUNA]
+[3.0 MB - 4.0 MB] : FRAGMENTO LIVRE 2    (1 MB)  [LIVRE - LACUNA]
 
 --- DIAGNÓSTICO DE FRAGMENTAÇÃO EXTERNA ---
 Total de Memória Livre na Área Reservada : 1.5 MB (1.5 MB)
@@ -348,14 +327,14 @@ Realocando blocos contíguos para eliminar a fragmentação externa...
 - Mapeamento de 'Kernel_CryptoEngine': [2.5 MB a 3.0 MB] -> Ajustado para: [2.0 MB a 2.5 MB]
 
 --- MAPA APÓS COMPACTAÇÃO ---
-[0.0 MB - 1.0 MB] : Núcleo Base do SO    (1 MB) [OCUPADO]
+[0.0 MB - 1.0 MB] : Kernel Base (Núcleo) (1 MB) [OCUPADO]
 [1.0 MB - 2.0 MB] : Kernel_DiskDriver    (1 MB) [OCUPADO]
 [2.0 MB - 2.5 MB] : Kernel_CryptoEngine  (512 KB) [OCUPADO]
 [2.5 MB - 4.0 MB] : Bloco Livre Contíguo (1.5 MB) [LIVRE]
 Resultado: Fragmentação externa eliminada. Maior bloco contíguo: 1.5 MB.
 ```
 
-Exemplo 4.2 — Memória Virtual, paginação sob demanda, fragmentação interna e tradução MMU:
+Exemplo 4.2 — Memória virtual, paginação sob demanda e cálculo de endereços (MMU):
 
 ```
 > create_process --name App_Navegador --size 10KB --type normal
@@ -371,7 +350,7 @@ Página Lógica 2 : 2048 Bytes ocupados (50.0%)
 Fragmentação Interna Total: 2048 Bytes de desperdício na Página Lógica 2.
 Status: Tabela de Páginas gerada sem alocar molduras na RAM (Alocação por demanda).
 > page_table --process App_Navegador
-TABELA DE PÁGINAS — Processo 'App_Navegador' (PID 104, 10 KB)
+TABELA DE PÁGINAS — Processo 'App_Navegador' (PID 101, 10 KB)
 PÁG    MOLDURA    V     R     M     SWAP     OCUPADO    FRAG.INT    
 --------------------------------------------------------------------
 0      -          0     0     0     -        4096 B     0 B         
@@ -427,6 +406,139 @@ javac -d out src/fsim/*.java test/fsim/*.java
 java -ea -cp out fsim.MemoryTest
 ```
 
+## Etapa 5 — Gerenciamento de Processos, Threads, Syscalls e Escalonamento de CPU
+
+Camada de gerenciamento de processos, execução de ciclos de instrução, controle de chamadas de sistema (syscalls), exclusão mútua concorrente (mutexes) e escalonamento de CPU integrada à memória virtual e ao sistema de arquivos:
+
+- **Ciclo de Vida do Processo e PCB Completo**:
+  - Processos operam nos estados canônicos do sistema operacional: `NOVO → PRONTO → EXECUTANDO → BLOQUEADO → CONCLUÍDO`.
+  - Processos com tempo de chegada imediato (`--arrival 0`) realizam admissão automática para `PRONTO` no instante de criação.
+  - Cada processo possui um Bloco de Controle de Processo (`SimProcess`) contendo PID, identificador do usuário (`owner`), nível de prioridade (menor número inteiro = maior prioridade: `0` = Crítica, `1` = Alta, `2` = Baixa), tempo total de CPU (`burstMs`), tempo de CPU executado (`executedCpuMs`), histórico cronológico de transições de estado (`transitions`), tabela de páginas virtuais e conjunto de threads associadas.
+- **Syscalls Embutidas e Bloqueio Automático por E/S**:
+  - Processos podem incorporar um perfil determinístico de chamadas de sistema via `--syscall` (ex.: `"read_disk at 3ms (duration: 4ms)"`, `"write_disk at 6ms (duration: 2ms)"`, `"read_file /caminho at 2ms (duration: 3ms)"` ou `--syscall random`).
+  - O gatilho (`at Xms`) é avaliado em função do **tempo de CPU acumulado pelo processo** (`executedCpuMs == X`). Ao atingir a marca, a CPU detecta a interrupção/syscall, transitando o processo de `EXECUTANDO` para `BLOQUEADO`.
+  - A CPU é imediatamente liberada para o próximo processo elegível da fila de prontos. O retorno da E/S ocorre após o intervalo de duração estipulado, transitando o processo de volta para `PRONTO` (`BLOQUEADO → PRONTO`).
+  - Syscalls que referenciam caminhos de arquivos reais validam permissões POSIX, integridade e quarentena, enfileirando requisições `IoRequest` reais nos discos físicos do arranjo RAID.
+- **Memória Virtual Sincronizada ao Relógio de CPU (1 ms)**:
+  - O motor de simulação discreta (`run_simulation` e `schedule`) avança o relógio da CPU em passos de `1 ms`.
+  - A cada tick de CPU, o processo referencia páginas lógicas na MMU (`PagedMemory.accessPageAt`). Se a página já reside em uma moldura física, contabiliza-se um **HIT** e atualiza-se o timestamp de acesso para algoritmos de substituição (como LRU).
+  - Em caso de ausência (**Page Fault**), uma moldura física é alocada; se a RAM estiver lotada, aciona-se o algoritmo de substituição configurado (LRU, Segunda Chance, FIFO ou LFU), salvando a página vítima na partição de *swap* em disco e restaurando páginas antigas quando necessário.
+- **Concorrência de Threads e Exclusão Mútua (`Mutex`)**:
+  - Cada processo cria automaticamente sua thread principal (`T1`) e permite instanciar threads adicionais (`create_thread`), compartilhando o mesmo espaço de memória do processo pai.
+  - As threads podem disputar recursos protegidos por travas nomeadas (`Mutex`).
+  - Quando uma thread tenta adquirir um mutex ocupado, ocorre contenção: a thread é suspensa (`EXECUTANDO → BLOQUEADO`) e inserida na fila de espera FIFO do mutex. O processo pai só transita para `BLOQUEADO` se todas as suas threads ativas estiverem bloqueadas.
+  - A liberação do mutex (`unlock`) transfere a posse imediatamente para a próxima thread da fila de espera, acordando-a para o estado `PRONTO`.
+- **Escalonador Combinado (`Priority_RR`) e Métricas Globais de Desempenho**:
+  - Algoritmo de escalonamento baseado em **múltiplas filas de prioridade com preempção e Round-Robin**:
+    - **Preempção imediata entre níveis de prioridade**: sempre que um processo de prioridade estritamente superior (menor número) entrar em `PRONTO` (por chegada ou desbloqueio de E/S), o processo atual de menor prioridade sofre preempção e retorna para a sua fila.
+    - **Round-Robin dentro da mesma fila de prioridade**: processos com a mesma prioridade compartilham a CPU por fatias de tempo controladas pelo `--quantum` (padrão: 2 ms). Ao expirar o quantum, o processo cede a vez ao próximo da mesma fila sem preempção arbitrária.
+    - Suporte aos algoritmos adicionais `RR`, `Priority` e `FCFS` para fins comparativos.
+  - Métricas calculadas ao término do escalonamento:
+    - **Tempo de Espera ($WT$)**: total de milissegundos em que o processo permaneceu no estado `PRONTO` aguardando a CPU.
+    - **Tempo de Retorno ($TAT$)**: tempo decorrido entre a chegada do processo e sua conclusão final ($t_{\text{conclusão}} - t_{\text{chegada}}$).
+    - **Tempo de Resposta ($RT$)**: intervalo entre a chegada e o primeiro despacho efetivo na CPU ($t_{\text{1º despacho}} - t_{\text{chegada}}$).
+    - **Médias Globais**: Tempo Médio de Espera ($AWT$), Tempo Médio de Retorno ($ATT$) e Tempo Médio de Resposta ($ART$).
+    - **Trocas de Contexto Totais**: contagem exata de transições de processo na CPU.
+    - **Utilização Global da CPU (%)**: percentual de tempo em que a CPU executou processos úteis em relação ao tempo total decorrido.
+
+| Comando | Descrição |
+|---|---|
+| `create_process --name N --burst B [--priority P] [--syscall S] [--arrival A] [--pages P]` | Cria processo com perfil de CPU e memória (apelido: `proc_create`) |
+| `run_simulation --process <N\|PID> --steps <N> [--pages P1,P2]` | Executa $N$ passos de instrução com CPU, memória e syscalls (apelido: `sim_run`) |
+| `schedule [--algorithm Priority_RR\|RR\|Priority\|FCFS] [--quantum Q]` | Escalonamento na CPU com linha do tempo e métricas (apelido: `cpu_sched`) |
+| `process_status <N\|PID>` | Exibe PCB completo, ciclo de vida, syscalls e threads (apelido: `pcb`) |
+| `sched_reset` | Reinicia contadores e estado de execução dos processos |
+| `create_thread <proc> <nome> [--lock M --at X] [--hold H] [--unlock M --at X]` | Cria thread concorrente com agendamento de mutex (apelido: `thread_create`) |
+| `mutex_lock <proc> <thread> <mutex>` | Solicita aquisição manual de mutex por uma thread |
+| `mutex_unlock <proc> <thread> <mutex>` | Solicita liberação manual de mutex por uma thread |
+| `mutex_status` | Exibe estado, dono e filas de espera de todos os mutexes (apelido: `mutexes`, `threads`) |
+
+Exemplo 5.1 — Criação de processos com perfil de CPU, prioridade e syscall:
+
+```
+> create_process --name App_Web --burst 8ms --priority 1 --syscall "read_disk at 3ms (duration: 4ms)" --pages 2,7,4
+[CRIAÇÃO DE PROCESSO] PID: 101 | Nome: App_Web | Prioridade: 1 (Alta)
+Alocação     : Memória Virtual Paginada (Tabela de Páginas criada)
+Syscall/I/O  : Agendada para t=3ms (Duração do Bloqueio: 4ms)
+Estado Inicial: PRONTO
+> create_process --name App_Render --burst 5ms --priority 2 --syscall random
+[CRIAÇÃO DE PROCESSO] PID: 102 | Nome: App_Render | Prioridade: 2 (Baixa)
+Alocação     : Memória Virtual Paginada (Tabela de Páginas criada)
+Syscall/I/O  : Evento Aleatório Habilitado
+Estado Inicial: PRONTO
+```
+
+Exemplo 5.2 — Execução de ciclos de instrução, memória virtual (HIT vs Page Fault) e detecção de syscall:
+
+```
+> run_simulation --process App_Web --steps 3
+--- STEP 1 (t=1ms) | Executando PID 101 ---
+CPU acessa: Página Lógica 02 -> [PAGE FAULT DETECTADO: Moldura 00 alocada] | Histórico LRU: Pág 02 atualizada (t=1ms)
+--- STEP 2 (t=2ms) | Executando PID 101 ---
+CPU acessa: Página Lógica 07 -> [PAGE FAULT DETECTADO: Moldura 01 alocada] | Histórico LRU: Pág 07 atualizada (t=2ms)
+--- STEP 3 (t=3ms) | Executando PID 101 ---
+CPU acessa: Página Lógica 04 -> [PAGE FAULT DETECTADO: Moldura 02 alocada] | Histórico LRU: Pág 04 atualizada (t=3ms)
+
+[SYSCALL DETECTADA]: PID 101 atingiu a instrução de leitura de disco agendada para t=3ms!
+- Mudança de Estado: EXECUTANDO -> BLOQUEADO (E/S de Disco).
+- Tempo de Retorno Previsto do Bloqueio: 4ms (Desbloqueio em t=7ms).
+- CPU liberada -> Escalonador seleciona próximo processo da Fila de Pronto.
+
+[RESUMO DA GERÊNCIA DE MEMÓRIA (RAM DINÂMICA)]
++------------------+---------------+-------------------+---------------------+
+| Moldura RAM (F)  | Processo/Pág  | Estado de Acesso  | Último Acesso (LRU) |
++------------------+---------------+-------------------+---------------------+
+| Moldura 00       | PID 101 / P02 | PAGE FAULT (NEW)  | t=1ms               |
+| Moldura 01       | PID 101 / P07 | PAGE FAULT (NEW)  | t=2ms               |
+| Moldura 02       | PID 101 / P04 | PAGE FAULT (NEW)  | t=3ms               |
+| Moldura 03..15   | [LIVRE]       | [LIVRE]           | -                   |
++------------------+---------------+-------------------+---------------------+
+```
+
+Exemplo 5.3 e 5.4 — Escalonamento combinado (`Priority_RR`), preempção, concorrência e métricas finais (`demo processos`):
+
+```
+> schedule --algorithm Priority_RR --quantum 2ms
+Fila de Pronto Inicial:
+- Prioridade 1 (Alta) : [PID 101 (Burst 8ms), PID 103 (Burst 4ms)]
+- Prioridade 2 (Baixa) : [PID 102 (Burst 5ms)]
+
+--- LINHA DO TEMPO DA CPU ---
+[0ms - 2ms] Executando PID 101 | Quantum 2ms expirou -> Volta p/ Fila P1
+[2ms - 4ms] Executando PID 103 | Quantum 2ms expirou -> Volta p/ Fila P1
+[4ms - 5ms] Executando PID 101 | Syscall de leitura atingida -> Estado EXECUTANDO -> BLOQUEADO (retorno em 8ms)
+[5ms - 7ms] Executando PID 103 | Execução concluída -> Estado EXECUTANDO -> CONCLUÍDO
+[7ms - 8ms] Executando PID 102 | Preempção por processo de prioridade superior -> Volta p/ Fila P2
+[8ms]       Evento E/S: PID 101 encerra leitura -> Estado BLOQUEADO -> PRONTO
+[8ms - 10ms] Executando PID 101 | Quantum 2ms expirou -> Volta p/ Fila P1
+[10ms - 12ms] Executando PID 101 | Quantum 2ms expirou -> Volta p/ Fila P1
+[12ms - 13ms] Executando PID 101 | Execução concluída -> Estado EXECUTANDO -> CONCLUÍDO
+[13ms - 15ms] Executando PID 102 | Syscall de leitura atingida -> Estado EXECUTANDO -> BLOQUEADO (retorno em 16ms)
+[15ms - 16ms] CPU Ociosa (todos os processos bloqueados aguardando E/S)
+[16ms]      Evento E/S: PID 102 encerra leitura -> Estado BLOQUEADO -> PRONTO
+[16ms - 18ms] Executando PID 102 | Execução concluída -> Estado EXECUTANDO -> CONCLUÍDO
+
+================ METRICAS FINAIS DO ESCALONADOR ================
+PID   NOME                 PRIORIDADE   CHEGADA   BURST     TAT       WT        RT        FAULTS 
+-----------------------------------------------------------------------------------------------
+101   App_Web              1 (Alta)     0ms       8ms       13ms      2ms       0ms       0      
+102   App_Render           2 (Baixa)    0ms       5ms       18ms      12ms      7ms       5      
+103   App_Batch            1 (Alta)     0ms       4ms       7ms       3ms       2ms       4      
+-----------------------------------------------------------------------------------------------
+Tempo Médio de Espera (AWT)     : 5.67 ms
+Tempo Médio de Retorno (ATT)    : 12.67 ms
+Tempo Médio de Resposta (ART)   : 3.00 ms
+Trocas de Contexto Totais       : 10
+Utilização Global da CPU        : 94.4% (Tempo Ocupado: 17ms / Total: 18ms)
+```
+
+Testes da Etapa 5:
+
+```bash
+javac -d out src/fsim/*.java test/fsim/*.java
+java -ea -cp out fsim.ProcessTest
+```
+
 ## Estrutura
 
 ```
@@ -457,6 +569,10 @@ src/fsim/PagedMemory.java                    memória virtual, molduras físicas
 src/fsim/PageReplacer.java                   algoritmos de substituição de páginas (LRU, Clock, FIFO, LFU e Ótimo)
 src/fsim/SwapSpace.java                      área de swap em disco com requisições reais de E/S no RAID
 src/fsim/SimProcess.java                     processo simulado (crítico contíguo vs normal paginado)
+src/fsim/SimThread.java                      thread simulada com suporte a ações agendadas de mutex
+src/fsim/MutexManager.java                   gerenciador de exclusão mútua e filas FIFO de bloqueio
+src/fsim/CpuScheduler.java                   escalonador de CPU preemptivo (Priority_RR, RR, Priority, FCFS) e métricas
+src/fsim/ProcessReport.java                  renderização de criação de processos, linha do tempo da CPU e PCB
 src/fsim/MemoryReport.java                   renderização de mapas de memória, tabelas de páginas e diagnósticos
 src/fsim/MemoryFullException.java            esgotamento de RAM ou fragmentação externa na área reservada
 src/fsim/FSException.java                    exceção base de erros exibidos ao usuário
@@ -466,4 +582,5 @@ src/fsim/AccessDeniedException.java          erro de negação de acesso pela ma
 test/fsim/IoTest.java                        testes da Etapa 2 (escalonamento, RAID, SSD e E/S)
 test/fsim/SecurityTest.java                  testes da Etapa 3 (segurança, proteção, criptografia e demos)
 test/fsim/MemoryTest.java                    testes da Etapa 4 (memória híbrida, paginação, swap e proteção)
+test/fsim/ProcessTest.java                   testes da Etapa 5 (processos, threads, syscalls, mutex e escalonador)
 ```
