@@ -47,7 +47,7 @@ final class Shell {
               format [--strategy contigua|encadeada|indexada] [--block-size 4KB] [--blocks 16] [--fit first|best|worst]
                      [--raid 0|1|4|5] [--disks N]
                                                formata o disco (apaga tudo)
-              demo [indexada|contigua|encadeada|raid5|seguranca]
+              demo [indexada|contigua|encadeada|raid5|seguranca|memoria]
                                                executa um cenário de demonstração
 
             E/S e arranjo RAID
@@ -86,6 +86,27 @@ final class Shell {
                                                verifica hashes SHA-256 e assinaturas maliciosas
               tamper_block <bloco> [dados]     simula adulteração direta em bloco físico
               audit_log [--clear]              exibe (ou limpa) a trilha de auditoria
+
+            Memória e paginação
+              create_process [--name N] [--size T | --file F] [--type critical|normal]
+                                               cria processo no modelo híbrido (apelido: proc_create)
+              terminate_process <N|PID>        encerra processo liberando recursos (apelido: kill)
+              ps                               lista processos ativos na RAM (apelido: processes)
+              page_table <N|PID>               exibe a tabela de páginas do processo (apelido: ptable)
+              translate_address --process <N|PID> (--page P [--offset D] | --vaddr V) [--load]
+                                               traduz endereço lógico em físico (apelido: mmu)
+              execute_step --process <N|PID> [--instruction TXT] [--page P] [--write]
+                                               simula acesso à memória pelo processador (apelido: step)
+              memory_status [--reserved] [--virtual] [--details]
+                                               mapa e diagnóstico da memória (apelido: free)
+              memory_compact [--reserved]      compacta a área reservada eliminando fragmentação externa
+              memory_format [--reserved T] [--dynamic T] [--page-size T] [--fit first|best|worst] [--policy POL]
+                                               reconfigura a arquitetura de memória (apelido: mem_config)
+              page_policy <LRU|SEGUNDA_CHANCE|FIFO|LFU>
+                                               define a política de substituição da RAM dinâmica
+              page_sim [--frames N] [--refs R] [--policy P|ALL] [--steps]
+                                               simula algoritmos de substituição (inclui Ótimo)
+              memwatch <N|off>                 monitor periódico a cada N operações de memória
 
             Outros
               echo <texto>  |  help  |  exit""";
@@ -165,6 +186,35 @@ final class Shell {
                 "antivirus_scan / --quarantine",
                 "logout",
                 "audit_log"));
+        DEMOS.put("memoria", List.of(
+                "echo # --- CENÁRIO 1: Área Reservada e Fragmentação Externa (Exemplo 4.1) ---",
+                "memory_format --reserved 4MB --dynamic 64KB --page-size 4KB --fit first",
+                "create_process --name Kernel_DiskDriver --size 1MB --type critical",
+                "create_process --name Kernel_NetDriver --size 512KB --type critical",
+                "create_process --name Kernel_CryptoEngine --size 512KB --type critical",
+                "memory_status --reserved",
+                "terminate_process --name Kernel_NetDriver",
+                "memory_status --reserved",
+                "echo # Tentativa de alocar 1.5MB contíguos falharia por fragmentação externa",
+                "memory_compact --reserved",
+                "memory_status --reserved",
+                "echo # --- CENÁRIO 2: Memória Virtual, Paginação sob Demanda e Frag. Interna (Exemplo 4.2) ---",
+                "create_process --name App_Navegador --size 10KB --type normal",
+                "page_table --process App_Navegador",
+                "translate_address --process App_Navegador --page 2 --offset 100",
+                "execute_step --process App_Navegador --instruction \"LOAD_DATA Página 2\"",
+                "translate_address --process App_Navegador --page 2 --offset 100",
+                "echo # --- CENÁRIO 3: Substituição de Páginas (LRU vs Segunda Chance) e Swap ---",
+                "memory_format --reserved 2MB --dynamic 12KB --page-size 4KB --policy LRU",
+                "create_process --name ProcA --size 8KB --type normal",
+                "create_process --name ProcB --size 8KB --type normal",
+                "execute_step --process ProcA --page 0",
+                "execute_step --process ProcA --page 1",
+                "execute_step --process ProcB --page 0",
+                "memory_status --virtual --details",
+                "execute_step --process ProcB --page 1",
+                "memory_status --virtual --details",
+                "page_sim --frames 3 --refs 7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1 --policy ALL"));
     }
 
     private final FileSystem fs;
@@ -234,6 +284,30 @@ final class Shell {
         commands.put("antivirus_scan", this::antivirusScan);
         commands.put("tamper_block", this::tamperBlock);
         commands.put("audit_log", this::auditLog);
+        commands.put("create_process", this::createProcess);
+        commands.put("proc_create", this::createProcess);
+        commands.put("terminate_process", this::terminateProcess);
+        commands.put("kill_process", this::terminateProcess);
+        commands.put("kill", this::terminateProcess);
+        commands.put("ps", this::ps);
+        commands.put("processes", this::ps);
+        commands.put("page_table", this::pageTable);
+        commands.put("ptable", this::pageTable);
+        commands.put("translate_address", this::translateAddress);
+        commands.put("mmu", this::translateAddress);
+        commands.put("execute_step", this::executeStep);
+        commands.put("step", this::executeStep);
+        commands.put("memory_status", this::memoryStatus);
+        commands.put("mem_status", this::memoryStatus);
+        commands.put("free", this::memoryStatus);
+        commands.put("memory_compact", this::memoryCompact);
+        commands.put("mem_compact", this::memoryCompact);
+        commands.put("memory_format", this::memoryFormat);
+        commands.put("mem_config", this::memoryFormat);
+        commands.put("page_policy", this::pagePolicy);
+        commands.put("mem_policy", this::pagePolicy);
+        commands.put("page_sim", this::pageSim);
+        commands.put("memwatch", this::memwatch);
     }
 
     // ------------------------------------------------------------- execução
@@ -273,6 +347,9 @@ final class Shell {
         }
         if (autoPolicy != null && pendingIo()) {
             dispatch(autoPolicy, null);
+        }
+        if (fs.memory != null && fs.memory.tickWatch()) {
+            out.println(MemoryReport.periodicSummary(fs.memory));
         }
         return true;
     }
@@ -997,6 +1074,200 @@ final class Shell {
             return;
         }
         out.println(Report.auditLog(fs.audit.entries()));
+    }
+
+    // ---------------------------------------------------------------- memória
+    private void createProcess(List<String> args) {
+        Parsed p = opts(args, Set.of("--name", "--size", "--file", "--type"), Set.of());
+        String name = p.opts().get("--name");
+        if (name == null && !p.pos().isEmpty()) {
+            name = p.pos().get(0);
+        }
+        if (name == null || name.isBlank()) {
+            throw new FSException("uso: create_process [--name <nome> | <nome>] [--size <tam>] [--file <arq>] [--type critical|normal]");
+        }
+        SimProcess.Type type = SimProcess.Type.parse(p.opts().getOrDefault("--type", "normal"));
+        Long size = p.opts().containsKey("--size") ? Units.parseSize(p.opts().get("--size")) : null;
+        String file = p.opts().get("--file");
+        SimProcess proc = fs.memory.createProcess(fs, name, type, size, file);
+        if (proc.type == SimProcess.Type.CRITICAL) {
+            ReservedArena.Segment seg = fs.memory.reserved.segmentOf(proc);
+            out.println("[CRIAÇÃO DE PROCESSO CRÍTICO] Processo '" + proc.name + "' criado (PID " + proc.pid
+                    + ", " + Units.fmtSize(proc.sizeBytes) + ").");
+            out.println(MemoryReport.criticalCreated(proc, seg));
+        } else {
+            out.println(MemoryReport.normalCreated(proc, fs.memory.paged.pageSize));
+        }
+    }
+
+    private void terminateProcess(List<String> args) {
+        Parsed p = opts(args, Set.of("--name", "--pid"), Set.of());
+        String ref = p.opts().get("--name");
+        if (ref == null) {
+            ref = p.opts().get("--pid");
+        }
+        if (ref == null && !p.pos().isEmpty()) {
+            ref = p.pos().get(0);
+        }
+        if (ref == null || ref.isBlank()) {
+            throw new FSException("uso: terminate_process <nome|PID> [--name <N>] [--pid <ID>]");
+        }
+        MemoryManager.TerminationResult res = fs.memory.terminateProcess(fs, ref);
+        out.println(MemoryReport.processTerminated(res, fs.memory.reserved));
+    }
+
+    private void ps(List<String> args) {
+        out.println(MemoryReport.processTable(fs.memory, fs.memory.paged.pageSize));
+    }
+
+    private void pageTable(List<String> args) {
+        Parsed p = opts(args, Set.of("--process"), Set.of());
+        String ref = p.opts().get("--process");
+        if (ref == null && !p.pos().isEmpty()) {
+            ref = p.pos().get(0);
+        }
+        if (ref == null || ref.isBlank()) {
+            throw new FSException("uso: page_table [--process] <nome|PID>");
+        }
+        SimProcess proc = fs.memory.findProcess(ref);
+        out.println(MemoryReport.pageTableReport(proc, fs.memory.paged.pageSize));
+    }
+
+    private void translateAddress(List<String> args) {
+        Parsed p = opts(args, Set.of("--process", "--page", "--offset", "--vaddr"), Set.of("--load"));
+        String ref = p.opts().get("--process");
+        if (ref == null && !p.pos().isEmpty()) {
+            ref = p.pos().get(0);
+        }
+        if (ref == null || ref.isBlank()) {
+            throw new FSException("uso: translate_address --process <nome|PID> (--page <P> [--offset <D>] | --vaddr <V>) [--load]");
+        }
+        Integer page = p.opts().containsKey("--page") ? count(p.opts().get("--page")) : null;
+        int offset = p.opts().containsKey("--offset") ? count(p.opts().get("--offset")) : 0;
+        Long vaddr = null;
+        if (p.opts().containsKey("--vaddr")) {
+            String v = p.opts().get("--vaddr").trim();
+            if (v.startsWith("0x") || v.startsWith("0X")) {
+                vaddr = Long.parseLong(v.substring(2), 16);
+            } else {
+                vaddr = Long.parseLong(v);
+            }
+        }
+        if (page == null && vaddr == null) {
+            throw new FSException("informe --page <num> ou --vaddr <endereco>");
+        }
+        boolean load = p.opts().containsKey("--load");
+        PagedMemory.Translation tr = fs.memory.translate(fs, ref, page, offset, vaddr, load);
+        out.println(MemoryReport.translationReport(tr, fs.memory.paged.pageSize, true));
+    }
+
+    private void executeStep(List<String> args) {
+        Parsed p = opts(args, Set.of("--process", "--instruction", "--page"), Set.of("--write"));
+        String ref = p.opts().get("--process");
+        String instruction = p.opts().get("--instruction");
+        if (ref == null && !p.pos().isEmpty()) {
+            ref = p.pos().get(0);
+            if (instruction == null && p.pos().size() > 1) {
+                instruction = p.pos().get(1);
+            }
+        }
+        if (ref == null || ref.isBlank()) {
+            throw new FSException("uso: execute_step --process <nome|PID> [--instruction <txt>] [--page <P>] [--write]");
+        }
+        Integer page = p.opts().containsKey("--page") ? count(p.opts().get("--page")) : null;
+        boolean write = p.opts().containsKey("--write");
+        PagedMemory.AccessResult res = fs.memory.executeStep(fs, ref, instruction, page, write);
+        out.println(MemoryReport.executionStepReport(res));
+    }
+
+    private void memoryStatus(List<String> args) {
+        Parsed p = opts(args, Set.of(), Set.of("--reserved", "--virtual", "--details"));
+        boolean reserved = p.opts().containsKey("--reserved");
+        boolean virtual = p.opts().containsKey("--virtual");
+        boolean details = p.opts().containsKey("--details");
+        if (reserved && !virtual) {
+            out.println(MemoryReport.reservedStatus(fs.memory.reserved));
+        } else if (virtual && !reserved) {
+            out.println(MemoryReport.virtualStatus(fs.memory, details, pal));
+        } else {
+            out.println(MemoryReport.hybridOverview(fs.memory, details, pal));
+        }
+    }
+
+    private void memoryCompact(List<String> args) {
+        opts(args, Set.of(), Set.of("--reserved"));
+        List<ReservedArena.Move> moves = fs.memory.compactReserved(fs);
+        out.println(MemoryReport.compactionReport(moves, fs.memory.reserved));
+    }
+
+    private void memoryFormat(List<String> args) {
+        Parsed p = opts(args, Set.of("--reserved", "--dynamic", "--frames", "--page-size", "--fit", "--policy"), Set.of());
+        long resBytes = p.opts().containsKey("--reserved")
+                ? Units.parseSize(p.opts().get("--reserved"))
+                : fs.memory.reserved.totalBytes;
+        int pageSize = p.opts().containsKey("--page-size")
+                ? (int) Units.parseSize(p.opts().get("--page-size"))
+                : fs.memory.paged.pageSize;
+        long dynBytes;
+        if (p.opts().containsKey("--dynamic")) {
+            dynBytes = Units.parseSize(p.opts().get("--dynamic"));
+        } else if (p.opts().containsKey("--frames")) {
+            dynBytes = (long) count(p.opts().get("--frames")) * pageSize;
+        } else {
+            dynBytes = fs.memory.paged.totalBytes();
+        }
+        String fit = p.opts().getOrDefault("--fit", fs.memory.reserved.fit);
+        PageReplacer.Policy policy = p.opts().containsKey("--policy")
+                ? PageReplacer.Policy.parseLive(p.opts().get("--policy"))
+                : fs.memory.paged.policy;
+        fs.memory.configure(fs, resBytes, dynBytes, pageSize, fit, policy);
+        out.println("Memória reconfigurada: Área Reservada = " + Units.fmtSize(resBytes)
+                + " (fit: " + fit + "), RAM Dinâmica = " + Units.fmtSize(dynBytes)
+                + " (" + (dynBytes / pageSize) + " molduras de " + Units.fmtSize(pageSize)
+                + "), Política = " + policy.label + ".");
+    }
+
+    private void pagePolicy(List<String> args) {
+        need(args, 1, "page_policy <LRU|SEGUNDA_CHANCE|FIFO|LFU>");
+        PageReplacer.Policy pol = PageReplacer.Policy.parseLive(args.get(0));
+        fs.memory.setPolicy(fs, pol);
+        out.println("Política de substituição de páginas alterada para " + pol.label + ".");
+    }
+
+    private void pageSim(List<String> args) {
+        Parsed p = opts(args, Set.of("--frames", "--refs", "--policy"), Set.of("--steps"));
+        int frames = p.opts().containsKey("--frames") ? count(p.opts().get("--frames")) : 3;
+        String refsStr = p.opts().getOrDefault("--refs", "7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1");
+        List<Integer> refs = new ArrayList<>();
+        for (String s : refsStr.split("[,\\s]+")) {
+            if (!s.isBlank()) {
+                refs.add(count(s.trim()));
+            }
+        }
+        String polStr = p.opts().getOrDefault("--policy", "ALL");
+        boolean steps = p.opts().containsKey("--steps");
+        List<PageReplacer.SimResult> results = new ArrayList<>();
+        if (polStr.equalsIgnoreCase("ALL") || polStr.equalsIgnoreCase("TODAS")) {
+            for (PageReplacer.Policy pol : PageReplacer.allPolicies()) {
+                results.add(PageReplacer.simulate(pol, frames, refs));
+            }
+        } else {
+            PageReplacer.Policy pol = PageReplacer.Policy.parse(polStr);
+            results.add(PageReplacer.simulate(pol, frames, refs));
+        }
+        out.println(MemoryReport.simulationReport(results, steps));
+    }
+
+    private void memwatch(List<String> args) {
+        need(args, 1, "memwatch <N|off>");
+        String val = args.get(0);
+        int interval = val.equalsIgnoreCase("off") || val.equalsIgnoreCase("desligado") ? 0 : count(val);
+        fs.memory.setWatchInterval(fs, interval);
+        if (interval > 0) {
+            out.println("Monitor periódico de memória ativado: a cada " + interval + " operações.");
+        } else {
+            out.println("Monitor periódico de memória desativado.");
+        }
     }
 
     // ------------------------------------------------------------ auxiliares

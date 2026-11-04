@@ -30,6 +30,10 @@ public final class Main {
               --fit F            first | best | worst (só alocação contígua)
               --raid N           0 | 1 | 4 | 5 (padrão: 0)
               --disks N          discos físicos do arranjo (padrão: 1)
+              --ram-reserved R   tamanho da área reservada contígua (padrão: 4MB)
+              --ram-dynamic D    tamanho da área dinâmica paginada (padrão: 64KB)
+              --page-size P      tamanho da página na memória virtual (padrão: 4KB)
+              --page-policy POL  política de substituição (LRU, Segunda_Chance, FIFO, LFU; padrão: LRU)
               --no-color         desativa cores ANSI
               -h, --help         mostra esta ajuda""";
 
@@ -44,6 +48,10 @@ public final class Main {
         String fit = "first";
         String raid = "0";
         String disks = "1";
+        String ramReserved = null;
+        String ramDynamic = null;
+        String pageSize = null;
+        String pagePolicy = null;
         String script = null;
         boolean noColor = false;
 
@@ -55,6 +63,10 @@ public final class Main {
                 case "--fit" -> fit = value(args, ++i, out);
                 case "--raid" -> raid = value(args, ++i, out);
                 case "--disks" -> disks = value(args, ++i, out);
+                case "--ram-reserved" -> ramReserved = value(args, ++i, out);
+                case "--ram-dynamic" -> ramDynamic = value(args, ++i, out);
+                case "--page-size" -> pageSize = value(args, ++i, out);
+                case "--page-policy" -> pagePolicy = value(args, ++i, out);
                 case "--no-color" -> noColor = true;
                 case "-h", "--help" -> {
                     out.println(USAGE);
@@ -75,6 +87,18 @@ public final class Main {
                     RaidArray.parseLevel(raid), Integer.parseInt(disks));
         } catch (FSException | NumberFormatException e) {
             fail(out, e instanceof NumberFormatException ? "--blocks e --disks devem ser inteiros" : e.getMessage());
+        }
+
+        if (ramReserved != null || ramDynamic != null || pageSize != null || pagePolicy != null) {
+            try {
+                long rBytes = ramReserved != null ? Units.parseSize(ramReserved) : MemoryManager.DEFAULT_RESERVED_BYTES;
+                long dBytes = ramDynamic != null ? Units.parseSize(ramDynamic) : MemoryManager.DEFAULT_DYNAMIC_BYTES;
+                int pSize = pageSize != null ? (int) Units.parseSize(pageSize) : MemoryManager.DEFAULT_PAGE_SIZE;
+                PageReplacer.Policy pol = pagePolicy != null ? PageReplacer.Policy.parseLive(pagePolicy) : PageReplacer.Policy.LRU;
+                fs.memory.configure(fs, rBytes, dBytes, pSize, fit, pol);
+            } catch (FSException e) {
+                fail(out, e.getMessage());
+            }
         }
 
         Shell shell = new Shell(fs, !noColor && isTerminal() && System.getenv("NO_COLOR") == null, out);
