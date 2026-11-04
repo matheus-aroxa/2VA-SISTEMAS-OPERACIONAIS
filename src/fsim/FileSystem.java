@@ -24,6 +24,7 @@ final class FileSystem {
     final AuditLog audit = new AuditLog();
     final AuthManager auth = new AuthManager(audit);
     final IntegrityMonitor integrity = new IntegrityMonitor();
+    final MemoryManager memory = new MemoryManager();
 
     Disk disk;
     Allocator alloc;
