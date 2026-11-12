@@ -1,0 +1,2079 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulador de SO — Demonstração</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #1C1B20;
+      --bg-soft: #23222A;
+      --surface: #2A2933;
+      --surface-2: #312F3D;
+      --text: #F5F7FB;
+      --text-soft: #B8BCC8;
+      --line: rgba(255,255,255,0.10);
+
+      --accent: #28C2C4;
+      --accent-2: #B0AFFA;
+      --accent-3: #7BE7E8;
+
+      --success: #6EE7B7;
+      --warning: #F6C177;
+      --danger: #FF7B9C;
+
+      --term-bg: #121116;
+
+      --shadow-soft: 0 10px 30px rgba(0,0,0,0.25);
+      --shadow-glow: 0 0 0 1px rgba(40,194,196,0.16), 0 0 32px rgba(40,194,196,0.12);
+
+      --radius-sm: 12px;
+      --radius-md: 20px;
+      --radius-lg: 24px;
+      --radius-xl: 28px;
+
+      --fs-display: clamp(56px, 7vw, 96px);
+      --fs-h1: clamp(40px, 5vw, 72px);
+      --fs-h2: clamp(28px, 3.4vw, 46px);
+      --fs-h3: clamp(20px, 2vw, 28px);
+      --fs-body-lg: clamp(18px, 1.5vw, 24px);
+      --fs-body: 18px;
+      --fs-small: 14px;
+      --fs-mono: 13px;
+      --fs-term: clamp(12px, 0.95vw, 14px);
+
+      --container-pad-y: 56px;
+      --container-pad-x: 64px;
+      --content-max: 1280px;
+
+      --anim-duration: 0.7s;
+      --anim-ease: ease;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-snap-type: y mandatory;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 20% 20%, rgba(176,175,250,0.10), transparent 30%),
+        radial-gradient(circle at 80% 30%, rgba(40,194,196,0.10), transparent 28%),
+        linear-gradient(180deg, #1C1B20 0%, #17161B 100%);
+      background-attachment: fixed;
+      color: var(--text);
+      font-family: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+      overflow-x: hidden;
+    }
+
+    .presentation { position: relative; }
+
+    .slide {
+      position: relative;
+      min-height: 100vh;
+      width: 100%;
+      scroll-snap-align: start;
+      scroll-snap-stop: always;
+      display: grid;
+      place-items: stretch;
+      overflow: hidden;
+      isolation: isolate;
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 56px 56px;
+      mask-image: radial-gradient(circle at center, black 45%, transparent 100%);
+      opacity: 0.25;
+      z-index: 0;
+    }
+
+    .slide-inner {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      width: min(100%, calc(var(--content-max) + (var(--container-pad-x) * 2)));
+      margin: 0 auto;
+      padding: var(--container-pad-y) var(--container-pad-x);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 28px;
+    }
+
+    .slide-counter {
+      position: absolute;
+      top: 28px;
+      right: 32px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--fs-mono);
+      letter-spacing: 0.16em;
+      color: var(--text-soft);
+      z-index: 3;
+    }
+
+    .module-tag {
+      position: absolute;
+      top: 28px;
+      left: 32px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(184,188,200,0.6);
+      z-index: 3;
+    }
+    .module-tag b { color: var(--accent); font-weight: 500; }
+
+    .mono {
+      font-family: "JetBrains Mono", monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow {
+      font-size: var(--fs-mono);
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      max-width: 760px;
+      font-size: var(--fs-body-lg);
+      line-height: 1.4;
+      color: var(--text-soft);
+      margin: 0;
+    }
+
+    h1, h2, h3, p, blockquote, ul, ol, figure { margin: 0; }
+
+    h1 {
+      font-size: var(--fs-display);
+      line-height: 0.94;
+      letter-spacing: -0.03em;
+      max-width: 13ch;
+    }
+
+    h2 {
+      font-size: var(--fs-h2);
+      line-height: 1.04;
+      letter-spacing: -0.025em;
+      max-width: 24ch;
+    }
+
+    h3 {
+      font-size: var(--fs-h3);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+
+    p, li {
+      font-size: var(--fs-body);
+      line-height: 1.45;
+      color: var(--text-soft);
+    }
+
+    code, .code {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.86em;
+      color: var(--accent-3);
+      background: rgba(40,194,196,0.08);
+      border: 1px solid rgba(40,194,196,0.16);
+      border-radius: 8px;
+      padding: 1px 7px;
+    }
+
+    .accent-text {
+      color: var(--accent);
+      text-shadow: 0 0 24px rgba(40,194,196,0.18);
+    }
+    .accent-2-text { color: var(--accent-2); }
+
+    .section-heading {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 980px;
+    }
+    .section-heading.compact { gap: 4px; }
+
+    .hero {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      max-width: 1000px;
+    }
+
+    .hero-badge {
+      align-self: flex-start;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(40,194,196,0.25);
+      background: rgba(40,194,196,0.08);
+      box-shadow: var(--shadow-glow);
+      color: var(--text);
+      font-size: var(--fs-mono);
+      font-family: "JetBrains Mono", monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    /* ---------- grids & cards ---------- */
+    .card-grid, .feature-grid, .stats-grid { display: grid; gap: 18px; }
+    .cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+    .card, .feature-card, .stat-card, .comparison-col, .faq-item {
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(8px);
+    }
+
+    .card, .feature-card, .faq-item {
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .card p, .feature-card p { font-size: 16px; }
+
+    .card--accent, .feature-card.card--accent, .stat-card.card--accent {
+      border-color: rgba(40,194,196,0.32);
+      box-shadow: var(--shadow-glow);
+    }
+
+    .card-label, .feature-tag, .stat-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--fs-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      align-self: flex-start;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: 1px solid rgba(255,255,255,0.12);
+      color: var(--text-soft);
+    }
+    .pill.good { color: var(--success); border-color: rgba(110,231,183,0.3); background: rgba(110,231,183,0.06); }
+    .pill.bad  { color: var(--danger);  border-color: rgba(255,123,156,0.3); background: rgba(255,123,156,0.06); }
+
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .comparison-col {
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .comparison-col.accent { border-color: rgba(40,194,196,0.3); box-shadow: var(--shadow-glow); }
+    .comparison-col.muted { opacity: 0.92; }
+    .comparison-col ul, .steps-list { padding: 0; margin: 0; list-style: none; }
+    .comparison-col li { padding-left: 18px; position: relative; }
+    .comparison-col li::before {
+      content: ""; position: absolute; left: 0; top: 0.62em;
+      width: 6px; height: 6px; border-radius: 999px; background: var(--accent);
+    }
+    .comparison-col.muted li::before { background: var(--accent-2); }
+    .comparison-col li + li { margin-top: 10px; }
+
+    /* ---------- diagram ---------- */
+    .diagram {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 22px;
+      align-items: stretch;
+    }
+    .diagram.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
+    .diagram-node {
+      padding: 22px;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      position: relative;
+    }
+    .diagram-node p { font-size: 16px; }
+    .diagram-node .feature-tag { font-size: 11px; }
+
+    .diagram-node:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -18px;
+      width: 14px;
+      height: 14px;
+      border-top: 1.5px solid rgba(40,194,196,0.55);
+      border-right: 1.5px solid rgba(40,194,196,0.55);
+      transform: translateY(-50%) rotate(45deg);
+    }
+    .diagram-node.active { border-color: rgba(40,194,196,0.32); box-shadow: var(--shadow-glow); }
+
+    .diagram-foot {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    /* ---------- stats ---------- */
+    .stats-grid .stat-card {
+      padding: 26px 22px;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .stat-value {
+      font-size: clamp(56px, 7vw, 110px);
+      line-height: 0.9;
+      letter-spacing: -0.05em;
+      color: var(--text);
+      text-shadow: 0 0 28px rgba(40,194,196,0.08);
+    }
+    .stat-value small { font-size: 0.32em; letter-spacing: 0; color: var(--text-soft); margin-left: 6px; }
+    .stat-card.card--accent .stat-value { color: var(--accent-3); }
+    .stat-note { font-size: 15px; color: var(--text-soft); }
+
+    /* ---------- steps ---------- */
+    .step {
+      display: grid;
+      grid-template-columns: 72px 1fr;
+      gap: 18px;
+      align-items: start;
+      padding: 18px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .step-num { color: var(--accent); font-size: clamp(18px, 2vw, 24px); padding-top: 4px; }
+    .step-copy { display: flex; flex-direction: column; gap: 6px; max-width: 900px; }
+
+    /* ---------- divider ---------- */
+    .divider-content, .closing-content {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      max-width: 940px;
+    }
+    .divider-slide h2 { font-size: var(--fs-h1); max-width: 16ch; }
+    .divider-num {
+      position: absolute;
+      right: 4vw;
+      bottom: -4vw;
+      font-family: "JetBrains Mono", monospace;
+      font-size: clamp(220px, 32vw, 460px);
+      font-weight: 700;
+      line-height: 1;
+      color: transparent;
+      -webkit-text-stroke: 1px rgba(40,194,196,0.14);
+      z-index: 0;
+      pointer-events: none;
+      user-select: none;
+    }
+    .start-box {
+      align-self: flex-start;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 16px 20px;
+      border-radius: var(--radius-md);
+      border: 1px dashed rgba(40,194,196,0.35);
+      background: rgba(40,194,196,0.05);
+    }
+    .start-box .mono { font-size: 11px; color: var(--accent); }
+    .start-box p { font-size: 15px; }
+
+    /* ---------- demo layout ---------- */
+    .demo-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.15fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .demo-grid.wide-term { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.3fr); }
+
+    .cmd-panel { display: flex; flex-direction: column; gap: 14px; }
+    .cmd-group { display: flex; flex-direction: column; gap: 6px; }
+    .cmd-group .mono { font-size: 11px; color: var(--accent-2); }
+
+    .cmd {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      width: 100%;
+      text-align: left;
+      padding: 9px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(18,17,22,0.75);
+      color: var(--text);
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--fs-term);
+      line-height: 1.4;
+      cursor: pointer;
+      position: relative;
+      transition: border-color 0.2s ease, background 0.2s ease;
+      word-break: break-word;
+    }
+    .cmd::before { content: ">"; color: var(--accent); flex: none; }
+    .cmd:hover { border-color: rgba(40,194,196,0.4); background: rgba(40,194,196,0.06); }
+    .cmd.copied { border-color: rgba(110,231,183,0.6); }
+    .cmd.copied::after {
+      content: "copiado";
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--success);
+    }
+    .cmd-hint { font-family: "JetBrains Mono", monospace; font-size: 11px; color: rgba(184,188,200,0.55); letter-spacing: 0.06em; }
+
+    .terminal {
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255,255,255,0.10);
+      background: var(--term-bg);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+      overflow: hidden;
+    }
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: rgba(255,255,255,0.02);
+    }
+    .terminal-bar i { width: 10px; height: 10px; border-radius: 999px; background: rgba(255,255,255,0.14); }
+    .terminal-bar span {
+      margin-left: 8px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-soft);
+    }
+    .terminal pre {
+      margin: 0;
+      padding: 16px 18px;
+      font-family: "JetBrains Mono", monospace;
+      font-size: var(--fs-term);
+      line-height: 1.55;
+      color: var(--text-soft);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .t-in   { color: var(--text); }
+    .t-acc  { color: var(--accent-3); }
+    .t-ok   { color: var(--success); }
+    .t-err  { color: var(--danger); }
+    .t-warn { color: var(--warning); }
+    .t-dim  { color: rgba(184,188,200,0.45); }
+    .t-lil  { color: var(--accent-2); }
+
+    .insight {
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      padding: 14px 18px;
+      border-radius: var(--radius-md);
+      border-left: 3px solid var(--accent-2);
+      background: rgba(176,175,250,0.06);
+    }
+    .insight .mono { font-size: 11px; color: var(--accent-2); padding-top: 4px; flex: none; }
+    .insight p { font-size: 16px; color: var(--text); }
+
+    /* ---------- permission visual ---------- */
+    .perm-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .perm-cell {
+      padding: 22px;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(255,255,255,0.08);
+      background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .perm-bits {
+      font-family: "JetBrains Mono", monospace;
+      font-size: clamp(40px, 5vw, 72px);
+      letter-spacing: 0.06em;
+      color: var(--text);
+    }
+    .perm-bits .off { color: rgba(184,188,200,0.25); }
+    .perm-cell.denied { border-color: rgba(255,123,156,0.3); }
+    .perm-cell.denied .perm-bits { color: var(--danger); }
+
+    /* ---------- closing ---------- */
+    .cta-row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-height: 52px; padding: 0 22px; border-radius: 999px;
+      border: 1px solid transparent; font-size: 16px; font-weight: 600;
+      font-family: "Chakra Petch", "Segoe UI", system-ui, sans-serif; cursor: pointer;
+    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent-3)); color: #081012; box-shadow: var(--shadow-glow); }
+    .btn-secondary { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.12); color: var(--text); }
+
+    /* ---------- animation ---------- */
+    .animate {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity var(--anim-duration) var(--anim-ease), transform var(--anim-duration) var(--anim-ease);
+      will-change: opacity, transform;
+    }
+    .animate.in { opacity: 1; transform: translateY(0); }
+    .delay-1 { transition-delay: 80ms; }
+    .delay-2 { transition-delay: 160ms; }
+    .delay-3 { transition-delay: 240ms; }
+    .delay-4 { transition-delay: 320ms; }
+    .delay-5 { transition-delay: 400ms; }
+
+    /* ---------- dot nav ---------- */
+    .dot-nav {
+      position: fixed;
+      top: 50%;
+      right: 14px;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      z-index: 100;
+    }
+    .dot-nav button {
+      width: 8px; height: 8px; border-radius: 999px; border: none; padding: 0;
+      background: rgba(255,255,255,0.2);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+      cursor: pointer;
+      transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    }
+    .dot-nav button.module-start { background: rgba(176,175,250,0.45); }
+    .dot-nav button.active { background: var(--accent); box-shadow: 0 0 0 5px rgba(40,194,196,0.14); transform: scale(1.2); }
+    .dot-nav button:hover { transform: scale(1.15); }
+
+    @media (max-height: 820px) {
+      :root { --container-pad-y: 48px; --fs-term: 12px; }
+      .slide-inner { gap: 20px; }
+      .terminal pre { padding: 12px 16px; line-height: 1.45; }
+      .cmd { padding: 7px 12px; }
+    }
+
+    @media (max-height: 700px) {
+      :root { --container-pad-y: 40px; --fs-h2: clamp(26px, 3vw, 38px); }
+      .slide-inner { gap: 16px; }
+      .cmd-panel { gap: 10px; }
+      .cmd-group { gap: 4px; }
+      .cmd { padding: 5px 10px; }
+      .terminal pre { line-height: 1.4; }
+      .module-tag, .slide-counter { top: 16px; }
+    }
+
+    @media (max-width: 1100px) {
+      :root { --container-pad-y: 44px; --container-pad-x: 36px; }
+      .cols-3, .cols-4, .cols-5, .diagram, .diagram.cols-5, .comparison-grid, .demo-grid, .demo-grid.wide-term, .perm-row {
+        grid-template-columns: 1fr;
+      }
+      .diagram-node:not(:last-child)::after {
+        top: auto; right: auto; bottom: -16px; left: 50%;
+        transform: translateX(-50%) rotate(135deg);
+      }
+    }
+
+    @media (max-width: 720px) {
+      :root { --container-pad-y: 28px; --container-pad-x: 18px; --fs-body: 16px; }
+      .slide-counter { top: 16px; right: 20px; }
+      .module-tag { top: 16px; left: 18px; }
+      .dot-nav { display: none; }
+      .step { grid-template-columns: 52px 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="dot-nav" aria-label="Navegação de slides"></nav>
+
+  <main class="presentation">
+
+    <!-- ===================================================== ABERTURA -->
+    <section class="slide title-slide">
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="hero">
+          <div class="hero-badge animate delay-1">Java 17 · sem dependências</div>
+          <div class="eyebrow mono animate delay-2">Sistemas Operacionais · 2ª VA</div>
+          <h1 class="animate delay-3">Um <span class="accent-text">sistema operacional</span> simulado, ao vivo</h1>
+          <p class="subtitle animate delay-4">Cinco módulos, cinco demonstrações independentes, tudo rodando no mesmo simulador.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide grid-slide">
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Roteiro</div>
+          <h2 class="animate delay-2">O que vamos demonstrar</h2>
+        </div>
+        <div class="card-grid cols-5">
+          <article class="card animate delay-1">
+            <div class="card-label">01</div>
+            <h3>Sistema de Arquivos</h3>
+            <p>Árvore, blocos e três estratégias de alocação.</p>
+          </article>
+          <article class="card animate delay-2">
+            <div class="card-label">02</div>
+            <h3>Entrada e Saída</h3>
+            <p>Escalonamento do braço, RAID e SSD.</p>
+          </article>
+          <article class="card animate delay-3">
+            <div class="card-label">03</div>
+            <h3>Segurança</h3>
+            <p>Login, permissões, criptografia e antivírus.</p>
+          </article>
+          <article class="card animate delay-4">
+            <div class="card-label">04</div>
+            <h3>Processos</h3>
+            <p>Ciclo de vida, escalonador de CPU e mutex.</p>
+          </article>
+          <article class="card animate delay-5">
+            <div class="card-label">05</div>
+            <h3>Memória</h3>
+            <p>Área reservada, paginação e substituição.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide steps-slide">
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Antes de cada demo</div>
+          <h2 class="animate delay-2">Cada módulo começa num <span class="accent-text">simulador limpo</span></h2>
+        </div>
+        <ol class="steps-list">
+          <li class="step animate delay-1">
+            <div class="step-num mono">01</div>
+            <div class="step-copy">
+              <h3>Compilar uma vez</h3>
+              <p><code>javac -d out src/fsim/*.java</code> na raiz do projeto.</p>
+            </div>
+          </li>
+          <li class="step animate delay-2">
+            <div class="step-num mono">02</div>
+            <div class="step-copy">
+              <h3>Abrir simulador novo</h3>
+              <p><code>java -cp out fsim.Main</code>. Feche com <code>exit</code> ao fim do módulo.</p>
+            </div>
+          </li>
+          <li class="step animate delay-3">
+            <div class="step-num mono">03</div>
+            <div class="step-copy">
+              <h3>Clicar para copiar</h3>
+              <p>Nos slides de demo, clique num comando para copiá-lo e cole no terminal.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <!-- ===================================================== 01 SISTEMA DE ARQUIVOS -->
+    <section class="slide divider-slide" data-module="01">
+      <div class="divider-num">01</div>
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="divider-content">
+          <div class="eyebrow mono animate delay-1">Módulo 01</div>
+          <h2 class="animate delay-2">Sistema de <span class="accent-text">Arquivos</span></h2>
+          <p class="subtitle animate delay-3">Arquivos viram blocos, e a estratégia de alocação decide quais.</p>
+          <div class="start-box animate delay-4">
+            <div class="mono">Ponto de partida</div>
+            <p><code>java -cp out fsim.Main</code>: disco padrão indexado, 16 blocos de 4 KB.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide diagram-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Arquitetura</div>
+          <h2 class="animate delay-2">Quatro camadas entre o comando e o disco</h2>
+        </div>
+        <div class="diagram">
+          <div class="diagram-node animate delay-1">
+            <div class="feature-tag">Shell.java</div>
+            <h3>Comando</h3>
+            <p>Interpreta <code>create</code>, <code>mkdir</code>, <code>rm</code>…</p>
+          </div>
+          <div class="diagram-node animate delay-2">
+            <div class="feature-tag">FileSystem.java</div>
+            <h3>Árvore</h3>
+            <p>Resolve caminhos e cria nós de arquivo e diretório.</p>
+          </div>
+          <div class="diagram-node active animate delay-3">
+            <div class="feature-tag">*Allocator.java</div>
+            <h3>Estratégia</h3>
+            <p>Decide quais blocos cada arquivo recebe.</p>
+          </div>
+          <div class="diagram-node animate delay-4">
+            <div class="feature-tag">Disk.java</div>
+            <h3>Blocos</h3>
+            <p>Grava e lê os bytes de verdade.</p>
+          </div>
+        </div>
+        <div class="insight animate delay-5">
+          <div class="mono">Ideia-chave</div>
+          <p>O sistema de arquivos não sabe qual estratégia está ativa. Ele só pergunta ao alocador “quais blocos?”.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide feature-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Estratégias de alocação</div>
+          <h2 class="animate delay-2">Três formas de guardar um arquivo</h2>
+        </div>
+        <div class="feature-grid cols-3">
+          <article class="feature-card animate delay-1">
+            <div class="feature-tag">Contígua</div>
+            <h3>(início, tamanho)</h3>
+            <p>Blocos vizinhos. Leitura rápida, com first, best ou worst-fit.</p>
+            <span class="pill bad">Fragmentação externa</span>
+          </article>
+          <article class="feature-card animate delay-2">
+            <div class="feature-tag">Encadeada · FAT</div>
+            <h3>Bloco → próximo</h3>
+            <p>Uma tabela liga cada bloco ao seguinte até chegar em EOF.</p>
+            <span class="pill good">Sem frag. externa</span>
+          </article>
+          <article class="feature-card card--accent animate delay-3">
+            <div class="feature-tag">Indexada · i-node</div>
+            <h3>Bloco de índice</h3>
+            <p>Um bloco guarda a lista de todos os blocos do arquivo.</p>
+            <span class="pill good">Sem frag. externa</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 1.1 · Usando o sistema</div>
+          <h2 class="animate delay-2">Pastas, arquivos e caminhos</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Criar e navegar</div>
+              <button class="cmd">mkdir -p /home/aluno/docs</button>
+              <button class="cmd">cd /home/aluno</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Criar e ler</div>
+              <button class="cmd">create docs/nota.txt --content "Ola, professor!"</button>
+              <button class="cmd">cat docs/nota.txt</button>
+              <button class="cmd">create foto.jpg --size 10KB</button>
+              <button class="cmd">tree</button>
+            </div>
+            <div class="cmd-hint">clique para copiar</div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; cat docs/nota.txt</span>
+Ola, professor!
+<span class="t-in">&gt; create foto.jpg --size 10KB</span>
+'/home/aluno/foto.jpg' (10 KB) → <span class="t-acc">i-node no bloco 06 → índice [07, 08, 09]</span>
+<span class="t-in">&gt; tree</span>
+/
+└── home/ [DIR]
+    └── aluno/ [DIR]
+        ├── docs/ [DIR]
+        │   └── nota.txt (15 B) [ARQ]
+        └── foto.jpg (10 KB) [ARQ]</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 1.2 · Dentro do disco</div>
+          <h2 class="animate delay-2">10 KB de arquivo ocupam <span class="accent-text">12 KB</span> de disco</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Detalhes do arquivo</div>
+              <button class="cmd">stat foto.jpg</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Mover, apagar e ver o disco</div>
+              <button class="cmd">mv foto.jpg docs/</button>
+              <button class="cmd">rm docs/foto.jpg</button>
+              <button class="cmd">map</button>
+            </div>
+            <div class="insight">
+              <div class="mono">Frag. interna</div>
+              <p>3 blocos × 4 KB = 12 KB. A sobra de 2 KB no último bloco é desperdício.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; stat foto.jpg</span>
+Tamanho     : 10240 bytes (10 KB)
+Alocado     : 12288 bytes (3 bloco(s) de 4 KB)
+Frag. int   : <span class="t-warn">2048 bytes</span>
+Alocação    : <span class="t-acc">i-node no bloco 06 → índice [07, 08, 09]</span>
+
+<span class="t-in">&gt; map</span>  <span class="t-dim">(após apagar a foto)</span>
+    0   1   2   3   4   5   6   7 …
+00 [Ai][Bi][Ci][Di][Ei][E▁][··][··]…
+
+<span class="t-dim">i = i-node · ▁ = bloco quase vazio · ·· = livre</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 1.3 · Alocação contígua</div>
+          <h2 class="animate delay-2">32 KB livres, mas <span class="accent-text">16 KB não cabem</span></h2>
+        </div>
+        <div class="demo-grid wide-term">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Cenário pronto</div>
+              <button class="cmd">demo contigua</button>
+            </div>
+            <p>Cria 7 arquivos, apaga 3 alternados e tenta criar um arquivo de 16 KB. Depois roda o <code>defrag</code> e tenta de novo.</p>
+            <div class="insight">
+              <div class="mono">Frag. externa</div>
+              <p>O espaço livre existe, mas está espalhado em buracos de 2 blocos.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada · role para cima</span></div>
+<pre><span class="t-in">&gt; create grande.bin --size 16KB</span>
+<span class="t-err">Erro: fragmentação externa: há 8 blocos livres, mas a
+maior lacuna contígua tem apenas 2 (necessários 4).</span>
+
+<span class="t-dim">antes do defrag</span>
+00 [##][A█][A█][<span class="t-err">░░</span>][<span class="t-err">░░</span>][B█][B█][<span class="t-err">░░</span>][<span class="t-err">░░</span>][C█][C█][<span class="t-err">░░</span>][<span class="t-err">░░</span>][D▂][··][··]
+
+<span class="t-in">&gt; defrag</span>
+<span class="t-ok">Compactação concluída: 5 bloco(s) realocado(s).</span>
+
+<span class="t-dim">depois: o mesmo arquivo cabe</span>
+00 [##][A█][A█][B█][B█][C█][C█][D▂][<span class="t-ok">E█</span>][<span class="t-ok">E█</span>][<span class="t-ok">E█</span>][<span class="t-ok">E█</span>][··][··][··][··]</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>01</b> · Sistema de Arquivos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 1.4 · Alocação encadeada (FAT)</div>
+          <h2 class="animate delay-2">O arquivo se espalha, e a <span class="accent-text">FAT</span> liga os pedaços</h2>
+        </div>
+        <div class="demo-grid wide-term">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Cenário pronto</div>
+              <button class="cmd">demo encadeada</button>
+            </div>
+            <p>Apaga <code>b.txt</code> do meio do disco e cria <code>d.txt</code>, que é maior que o buraco deixado.</p>
+            <div class="insight">
+              <div class="mono">Contraste</div>
+              <p>Na contígua isso falharia. Na FAT, qualquer bloco livre serve.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada · role para cima</span></div>
+<pre><span class="t-in">&gt; create /home/user/b.txt --size 2KB</span>
+'/home/user/b.txt' (2 KB) → cadeia FAT: 04 → 05 → EOF
+<span class="t-in">&gt; rm /home/user/b.txt</span>
+<span class="t-in">&gt; create /home/user/d.txt --size 4500B</span>
+'/home/user/d.txt' (4.4 KB) →
+  <span class="t-acc">cadeia FAT: 04 → 05 → 09 → 10 → 11 → EOF</span>
+
+<span class="t-dim">trecho do mapa</span>
+Bloco 04 [DADO] : 'd.txt' (Bloco 1) → próx.: 05
+Bloco 05 [DADO] : 'd.txt' (Bloco 2) → <span class="t-acc">próx.: 09</span>
+Bloco 06 [DADO] : 'c.txt' (Bloco 1) → próx.: 07
+…
+Bloco 11 [DADO] : 'd.txt' (Bloco 5 - 404 bytes) → EOF</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== 02 ENTRADA E SAÍDA -->
+    <section class="slide divider-slide" data-module="02">
+      <div class="divider-num">02</div>
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="divider-content">
+          <div class="eyebrow mono animate delay-1">Módulo 02</div>
+          <h2 class="animate delay-2">Entrada e <span class="accent-text">Saída</span></h2>
+          <p class="subtitle animate delay-3">Cada bloco lido ou gravado vira um pedido na fila de um disco físico.</p>
+          <div class="start-box animate delay-4">
+            <div class="mono">Ponto de partida</div>
+            <p><code>java -cp out fsim.Main</code>: cada demo formata o próprio disco.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide diagram-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Do arquivo ao hardware</div>
+          <h2 class="animate delay-2">O caminho de uma requisição de E/S</h2>
+        </div>
+        <div class="diagram">
+          <div class="diagram-node animate delay-1">
+            <div class="feature-tag">Disk.java</div>
+            <h3>Bloco lógico</h3>
+            <p>O sistema de arquivos pede para ler ou gravar um bloco.</p>
+          </div>
+          <div class="diagram-node animate delay-2">
+            <div class="feature-tag">RaidArray.java</div>
+            <h3>RAID</h3>
+            <p>Traduz o bloco lógico em disco físico + trilha.</p>
+          </div>
+          <div class="diagram-node animate delay-3">
+            <div class="feature-tag">PhysicalDisk.java</div>
+            <h3>Fila</h3>
+            <p>Cada disco tem a sua cabeça e a sua fila de pedidos.</p>
+          </div>
+          <div class="diagram-node active animate delay-4">
+            <div class="feature-tag">ArmScheduler.java</div>
+            <h3>Escalonador</h3>
+            <p>Decide a ordem em que o braço atende os pedidos.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 2.1 · Arquivo vira pedido</div>
+          <h2 class="animate delay-2">Gravar e ler arquivos enche a fila do disco</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Disco grande, blocos pequenos</div>
+              <button class="cmd">format --strategy encadeada --blocks 200 --block-size 512B</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Gerar E/S</div>
+              <button class="cmd">create /a.txt --size 2KB</button>
+              <button class="cmd">create /b.txt --size 1KB</button>
+              <button class="cmd">cat /b.txt</button>
+              <button class="cmd">io</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; create /a.txt --size 2KB</span>
+'/a.txt' (2 KB) → cadeia FAT: 01 → 02 → 03 → 04 → EOF
+<span class="t-in">&gt; create /b.txt --size 1KB</span>
+'/b.txt' (1 KB) → cadeia FAT: 05 → 06 → EOF
+<span class="t-in">&gt; io</span>
+Disco 1 (cabeça na trilha 0):
+  <span class="t-acc">G1, G2, G3, G4</span>, <span class="t-acc">G5, G6</span>, <span class="t-lil">L5, L6</span>
+
+<span class="t-dim">G = gravação · L = leitura · número = trilha</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 2.2 · Escalonamento do braço</div>
+          <h2 class="animate delay-2">Mesmos pedidos, quatro algoritmos</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Cabeça na trilha 53 · disco de 200 trilhas</div>
+              <button class="cmd">disk_sched FCFS --head 53 --trilhas 98,183,37,122,14,124,65,67</button>
+              <button class="cmd">disk_sched SSTF --head 53 --trilhas 98,183,37,122,14,124,65,67</button>
+              <button class="cmd">disk_sched SCAN --head 53 --trilhas 98,183,37,122,14,124,65,67</button>
+              <button class="cmd">disk_sched C-SCAN --head 53 --trilhas 98,183,37,122,14,124,65,67</button>
+            </div>
+            <div class="cmd-hint">usa o disco de 200 blocos formatado na demo 2.1</div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada · SSTF</span></div>
+<pre><span class="t-in">--- ESCALONAMENTO DE DISCO: SSTF ---</span>
+Ordem de Atendimento :
+  53 → 65 → 67 → 37 → 14 → 98 → 122 → 124 → 183
+Total de Movimento   :
+  12 + 2 + 30 + 23 + 84 + 24 + 2 + 59 = <span class="t-acc">236 trilhas</span>
+
+<span class="t-in">--- ESCALONAMENTO DE DISCO: C-SCAN ---</span>
+Trajeto da Cabeça :
+  53 → 65 → … → 183 → <span class="t-warn">199 → 0</span> → 14 → 37
+Retorno do C-SCAN : <span class="t-warn">199 trilhas</span> (incluso no total)</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide stats-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Resultado · trilhas percorridas</div>
+          <h2 class="animate delay-2">FCFS anda quase <span class="accent-text">3×</span> mais que SSTF</h2>
+        </div>
+        <div class="stats-grid cols-4">
+          <div class="stat-card animate delay-1">
+            <div class="stat-value">640</div>
+            <div class="stat-label">FCFS</div>
+            <p class="stat-note">Ordem de chegada. Vai e volta à toa.</p>
+          </div>
+          <div class="stat-card card--accent animate delay-2">
+            <div class="stat-value">236</div>
+            <div class="stat-label">SSTF</div>
+            <p class="stat-note">Mais próximo primeiro. Risco de starvation.</p>
+          </div>
+          <div class="stat-card animate delay-3">
+            <div class="stat-value">331</div>
+            <div class="stat-label">SCAN</div>
+            <p class="stat-note">Elevador: sobe e desce atendendo.</p>
+          </div>
+          <div class="stat-card animate delay-4">
+            <div class="stat-value">382</div>
+            <div class="stat-label">C-SCAN</div>
+            <p class="stat-note">Volta vazio ao início. Espera uniforme.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide grid-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">RAID</div>
+          <h2 class="animate delay-2">Vários discos agindo como um só</h2>
+        </div>
+        <div class="card-grid cols-4">
+          <article class="card animate delay-1">
+            <div class="card-label">RAID 0</div>
+            <h3>Listras</h3>
+            <p>Divide os blocos entre os discos. Rápido, sem proteção.</p>
+            <span class="pill bad">Não tolera falha</span>
+          </article>
+          <article class="card animate delay-2">
+            <div class="card-label">RAID 1</div>
+            <h3>Espelho</h3>
+            <p>Grava tudo em todos os discos. Seguro, mas usa o dobro de espaço.</p>
+            <span class="pill good">Tolera falha</span>
+          </article>
+          <article class="card animate delay-3">
+            <div class="card-label">RAID 4</div>
+            <h3>Paridade fixa</h3>
+            <p>Um disco só para paridade, que vira gargalo nas gravações.</p>
+            <span class="pill good">Tolera 1 falha</span>
+          </article>
+          <article class="card card--accent animate delay-4">
+            <div class="card-label">RAID 5</div>
+            <h3>Paridade rotativa</h3>
+            <p>A paridade gira entre os discos. <code>P = A ⊕ B</code></p>
+            <span class="pill good">Tolera 1 falha</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 2.3 · RAID 5</div>
+          <h2 class="animate delay-2">Um disco morre, e o arquivo <span class="accent-text">continua legível</span></h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Montar o arranjo</div>
+              <button class="cmd">format --strategy indexada --block-size 4KB --blocks 12 --raid 5 --disks 3</button>
+              <button class="cmd">create /nota.txt --content "Dados importantes"</button>
+              <button class="cmd">array</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Falha e recuperação</div>
+              <button class="cmd">fail 2</button>
+              <button class="cmd">cat /nota.txt</button>
+              <button class="cmd">rebuild 2</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; array</span>
+Bloco  Disco 1      Disco 2      Disco 3
+00     L00 INODE    <span class="t-acc">L01 INODE</span>    <span class="t-lil">PARIDADE</span>
+01     L02 DADO     <span class="t-lil">PARIDADE</span>     L03 livre
+02     <span class="t-lil">PARIDADE</span>     L04 livre    L05 livre
+<span class="t-in">&gt; fail 2</span>
+<span class="t-err">Disco 2: falha simulada, conteúdo perdido.</span>
+<span class="t-err">Arranjo em modo degradado.</span>
+<span class="t-in">&gt; cat /nota.txt</span>
+<span class="t-ok">Dados importantes</span>
+<span class="t-in">&gt; rebuild 2</span>
+<span class="t-ok">Disco 2 reconstruído: 6 bloco(s) recalculados
+por XOR dos demais discos [OK]</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide comparison-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>02</b> · Entrada e Saída</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 2.4 · SSD</div>
+          <h2 class="animate delay-2">Balanceamento de desgaste faz o SSD <span class="accent-text">durar mais</span></h2>
+        </div>
+        <div class="cmd-panel animate delay-2" style="max-width: 420px;">
+          <button class="cmd">ssd_demo</button>
+        </div>
+        <div class="comparison-grid">
+          <div class="comparison-col muted animate delay-2">
+            <div class="feature-tag">Sem wear leveling</div>
+            <div class="stat-value" style="font-size: clamp(48px, 6vw, 88px);">19 <small>a</small> 198</div>
+            <ul>
+              <li>Apagamentos por bloco: muito desiguais</li>
+              <li>Amplificação de escrita: 5.82</li>
+              <li>Alguns blocos morrem cedo</li>
+            </ul>
+          </div>
+          <div class="comparison-col accent animate delay-3">
+            <div class="feature-tag">Com wear leveling</div>
+            <div class="stat-value" style="font-size: clamp(48px, 6vw, 88px); color: var(--accent-3);">56 <small>a</small> 85</div>
+            <ul>
+              <li>Desgaste distribuído entre os blocos</li>
+              <li>Amplificação de escrita: 4.96</li>
+              <li>Escolhe o bloco menos apagado</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== 03 SEGURANÇA -->
+    <section class="slide divider-slide" data-module="03">
+      <div class="divider-num">03</div>
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="divider-content">
+          <div class="eyebrow mono animate delay-1">Módulo 03</div>
+          <h2 class="animate delay-2">Segurança e <span class="accent-text">Controle de Acesso</span></h2>
+          <p class="subtitle animate delay-3">Quem é você, o que pode fazer, e quem mexeu no disco.</p>
+          <div class="start-box animate delay-4">
+            <div class="mono">Ponto de partida</div>
+            <p><code>java -cp out fsim.Main</code>: começa como <code>root</code> em MODO_KERNEL. Senha do root: <code>root</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide feature-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>03</b> · Segurança</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Camadas de proteção</div>
+          <h2 class="animate delay-2">Seis perguntas que o sistema responde</h2>
+        </div>
+        <div class="feature-grid cols-3">
+          <article class="feature-card animate delay-1">
+            <div class="feature-tag">Autenticação</div>
+            <h3>Quem é você?</h3>
+            <p>Senha guardada como <code>SHA-256(salt + senha)</code>, nunca em texto puro.</p>
+          </article>
+          <article class="feature-card animate delay-2">
+            <div class="feature-tag">Kernel × Usuário</div>
+            <h3>Pode mexer no sistema?</h3>
+            <p><code>format</code> e <code>useradd</code> exigem kernel. <code>sudo</code> eleva por 1 comando.</p>
+          </article>
+          <article class="feature-card card--accent animate delay-3">
+            <div class="feature-tag">rwx + ACL</div>
+            <h3>Pode mexer neste arquivo?</h3>
+            <p>Dono, grupo e outros, mais regras por usuário específico.</p>
+          </article>
+          <article class="feature-card animate delay-1">
+            <div class="feature-tag">AES-256</div>
+            <h3>E se roubarem o disco?</h3>
+            <p>Os blocos guardam só texto cifrado. Chave errada é recusada.</p>
+          </article>
+          <article class="feature-card animate delay-2">
+            <div class="feature-tag">Integridade</div>
+            <h3>Alguém adulterou?</h3>
+            <p>Hash SHA-256 por bloco e antivírus com quarentena.</p>
+          </article>
+          <article class="feature-card animate delay-3">
+            <div class="feature-tag">Auditoria</div>
+            <h3>O que aconteceu?</h3>
+            <p>Cada evento é registrado com usuário, modo e categoria.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide structure-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>03</b> · Segurança</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Permissões POSIX · modo 750</div>
+          <h2 class="animate delay-2">Por que o carlos <span class="accent-text">não lê</span> o config.sys</h2>
+        </div>
+        <div class="perm-row">
+          <div class="perm-cell animate delay-1">
+            <div class="feature-tag">Dono · root</div>
+            <div class="perm-bits">rwx</div>
+            <p>7 = ler + escrever + executar</p>
+          </div>
+          <div class="perm-cell animate delay-2">
+            <div class="feature-tag">Grupo · admin</div>
+            <div class="perm-bits">r<span class="off">-</span>x</div>
+            <p>5 = ler + executar</p>
+          </div>
+          <div class="perm-cell denied animate delay-3">
+            <div class="feature-tag" style="color: var(--danger);">Outros · carlos (devs)</div>
+            <div class="perm-bits">---</div>
+            <p>0 = nada. O carlos cai aqui.</p>
+          </div>
+        </div>
+        <div class="insight animate delay-4">
+          <div class="mono">Detalhe</div>
+          <p>A permissão é checada antes de qualquer bloco ser lido. Se for negada, o disco nem é tocado.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>03</b> · Segurança</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 3.1 · Cenário completo</div>
+          <h2 class="animate delay-2">Login, acesso negado e criptografia</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Cenário pronto</div>
+              <button class="cmd">demo seguranca</button>
+            </div>
+            <p>Cria o usuário <code>carlos</code>, faz login, tenta ler um arquivo protegido, cifra um segredo, adultera um bloco e planta um vírus de teste.</p>
+            <div class="insight">
+              <div class="mono">Repare</div>
+              <p>O prompt muda de <code>#</code> (kernel) para <code>$</code> (usuário) depois do login.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada · parte 1</span></div>
+<pre><span class="t-in">&gt; login --user carlos --password segredo123</span>
+<span class="t-ok">Autenticado com sucesso.</span> Usuário: 'carlos' |
+Grupo: 'devs' | Modo: <span class="t-acc">MODO_USUARIO</span>
+<span class="t-in">&gt; read_file /sistema/config.sys</span>
+Objeto      : /sistema/config.sys
+Permissões  : rwxr-x--- (750)
+Ação Pedida : LEITURA por 'carlos' (Grupo: devs)
+<span class="t-err">[NEGADO]: O usuário 'carlos' não possui permissão
+de leitura no objeto '/sistema/config.sys'.</span>
+<span class="t-in">&gt; encrypt_file /home/carlos/segredo.txt --key "MinhaChave123"</span>
+Conteúdo gravado nos blocos físicos:
+<span class="t-lil">"0xFF04D7E8F40EBA94... (Encrypted Ciphertext)"</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>03</b> · Segurança</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 3.1 · continuação</div>
+          <h2 class="animate delay-2">O antivírus pega a adulteração e o vírus</h2>
+        </div>
+        <div class="demo-grid">
+          <figure class="terminal animate delay-2">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>antivirus_scan / --quarantine</span></div>
+<pre>- segredo.txt  : <span class="t-ok">[OK - Criptografado e Íntegro]</span>
+- suspeito.tmp : <span class="t-err">[AMEAÇA]</span> Assinatura maliciosa
+                 detectada: 'EICAR-Test-Signature'!
+  Ação: <span class="t-warn">isolado em quarentena (permissões 000)</span>
+- app.log      : <span class="t-err">[ALERTA]</span> Hash do bloco difere
+                 do registro oficial!
+  Ação: <span class="t-warn">isolado em quarentena (permissões 000)</span>
+- config.sys   : <span class="t-ok">[OK - Íntegro]</span></pre>
+          </figure>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>audit_log · trecho</span></div>
+<pre>#006 [AUTENTICACAO] carlos (MODO_USUARIO)
+     login realizado para 'carlos'
+#007 [<span class="t-err">ACL_NEGADO</span>  ] carlos (MODO_USUARIO)
+     LEITURA negada em '/sistema/config.sys'
+#009 [<span class="t-warn">PRIVILEGIO</span>  ] carlos (<span class="t-acc">MODO_KERNEL</span>)
+     elevação temporária via sudo
+#011 [INTEGRIDADE ] carlos (MODO_USUARIO)
+     assinatura 'EICAR-Test-Signature' detectada</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>03</b> · Segurança</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 3.2 · Passo a passo (opcional)</div>
+          <h2 class="animate delay-2">Hash de senha, modo usuário e chave errada</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Como root</div>
+              <button class="cmd">useradd ana --password abc123</button>
+              <button class="cmd">users</button>
+              <button class="cmd">mkdir -p /home/ana</button>
+              <button class="cmd">chown ana /home/ana</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Como ana</div>
+              <button class="cmd">login --user ana --password abc123</button>
+              <button class="cmd">format --blocks 8</button>
+              <button class="cmd">create /home/ana/s.txt --content "segredo da ana"</button>
+              <button class="cmd">encrypt_file /home/ana/s.txt --key k1</button>
+              <button class="cmd">read_file /home/ana/s.txt --key errada</button>
+              <button class="cmd">read_file /home/ana/s.txt --key k1</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; users</span>
+ana | MODO_USUARIO | salt: <span class="t-lil">e01cb42d...</span> | sha256: <span class="t-acc">edc6badeb59c...</span>
+<span class="t-dim">(salt e hash mudam a cada execução)</span>
+<span class="t-in">ana:/ $ format --blocks 8</span>
+<span class="t-err">Erro: operação privilegiada: 'format' exige
+MODO_KERNEL</span>
+<span class="t-in">ana:/ $ read_file /home/ana/s.txt --key errada</span>
+<span class="t-err">Erro: chave incorreta: não foi possível
+descriptografar o arquivo</span>
+<span class="t-in">ana:/ $ read_file /home/ana/s.txt --key k1</span>
+<span class="t-ok">segredo da ana</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== 04 PROCESSOS -->
+    <section class="slide divider-slide" data-module="04">
+      <div class="divider-num">04</div>
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="divider-content">
+          <div class="eyebrow mono animate delay-1">Módulo 04</div>
+          <h2 class="animate delay-2">Gerenciamento de <span class="accent-text">Processos</span></h2>
+          <p class="subtitle animate delay-3">Quem usa a CPU, por quanto tempo, e o que acontece quando um processo espera.</p>
+          <div class="start-box animate delay-4">
+            <div class="mono">Ponto de partida</div>
+            <p><code>java -cp out fsim.Main</code>: sem processos criados. Os PIDs começam em 101.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide diagram-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Ciclo de vida · PCB</div>
+          <h2 class="animate delay-2">Os estados de um processo</h2>
+        </div>
+        <div class="diagram cols-5">
+          <div class="diagram-node animate delay-1">
+            <div class="feature-tag">01</div>
+            <h3>NOVO</h3>
+            <p>Acabou de ser criado.</p>
+          </div>
+          <div class="diagram-node animate delay-2">
+            <div class="feature-tag">02</div>
+            <h3>PRONTO</h3>
+            <p>Na fila, esperando a CPU.</p>
+          </div>
+          <div class="diagram-node active animate delay-3">
+            <div class="feature-tag">03</div>
+            <h3>EXECUTANDO</h3>
+            <p>Usando a CPU agora.</p>
+          </div>
+          <div class="diagram-node animate delay-4">
+            <div class="feature-tag">04</div>
+            <h3>BLOQUEADO</h3>
+            <p>Esperando E/S (syscall) ou um mutex.</p>
+          </div>
+          <div class="diagram-node animate delay-5">
+            <div class="feature-tag">05</div>
+            <h3>CONCLUÍDO</h3>
+            <p>Terminou todo o seu burst.</p>
+          </div>
+        </div>
+        <div class="diagram-foot animate delay-5">
+          <span class="pill">EXECUTANDO → PRONTO · quantum acabou ou preempção</span>
+          <span class="pill">BLOQUEADO → PRONTO · E/S terminou</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide feature-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Escalonador · Priority_RR</div>
+          <h2 class="animate delay-2">Prioridade entre filas, <span class="accent-text">Round-Robin</span> dentro delas</h2>
+        </div>
+        <div class="feature-grid cols-3">
+          <article class="feature-card animate delay-1">
+            <div class="feature-tag">Prioridade</div>
+            <h3>Menor número vence</h3>
+            <p>0 = crítica, 1 = alta, 2 = baixa. A fila mais prioritária roda primeiro.</p>
+          </article>
+          <article class="feature-card card--accent animate delay-2">
+            <div class="feature-tag">Preempção</div>
+            <h3>Tira quem é menos importante</h3>
+            <p>Se chega um processo mais prioritário, o atual volta para a fila.</p>
+          </article>
+          <article class="feature-card animate delay-3">
+            <div class="feature-tag">Quantum</div>
+            <h3>Fatias de 2 ms</h3>
+            <p>Mesma prioridade: cada processo roda 2 ms e passa a vez.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 4.1 · Criar processos</div>
+          <h2 class="animate delay-2">Três processos, duas prioridades, uma syscall</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Alta prioridade · faz leitura de disco em t=3ms</div>
+              <button class="cmd">create_process --name App_Web --burst 8ms --priority 1 --syscall "read_disk at 3ms (duration: 4ms)" --pages 2,7,4</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Baixa prioridade · syscall aleatória</div>
+              <button class="cmd">create_process --name App_Render --burst 5ms --priority 2 --syscall random</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Alta prioridade · só CPU</div>
+              <button class="cmd">create_process --name App_Batch --burst 4ms --priority 1</button>
+              <button class="cmd">ps</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">[CRIAÇÃO DE PROCESSO] PID: 101 | Nome: App_Web</span>
+Prioridade   : 1 (Alta)
+Syscall/I/O  : <span class="t-acc">Agendada para t=3ms (Bloqueio: 4ms)</span>
+Estado Inicial: PRONTO
+
+<span class="t-in">&gt; ps</span>
+PID  NOME        ESTADO  PRIORIDADE
+0    Núcleo SO   FIXO    -
+101  App_Web     NOVO    1 (Alta)
+102  App_Render  NOVO    2 (Baixa)
+103  App_Batch   NOVO    1 (Alta)</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 4.2 · Escalonar</div>
+          <h2 class="animate delay-2">A linha do tempo da CPU</h2>
+        </div>
+        <div class="demo-grid wide-term">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Rodar o escalonador</div>
+              <button class="cmd">schedule --algorithm Priority_RR --quantum 2ms</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Ver o PCB de um processo</div>
+              <button class="cmd">process_status App_Web</button>
+            </div>
+            <div class="insight">
+              <div class="mono">Repare</div>
+              <p>Em t=7ms o App_Render (baixa) começa, mas é interrompido em t=8ms porque o App_Web volta da E/S.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre>[0-2ms]   PID 101 | Quantum expirou → fila P1
+[2-4ms]   PID 103 | Quantum expirou → fila P1
+[4-5ms]   PID 101 | <span class="t-warn">Syscall → BLOQUEADO</span> (volta em 8ms)
+[5-7ms]   PID 103 | <span class="t-ok">CONCLUÍDO</span>
+[7-8ms]   PID 102 | <span class="t-err">Preempção</span> por prioridade superior
+[8ms]     <span class="t-acc">E/S: PID 101 BLOQUEADO → PRONTO</span>
+[8-13ms]  PID 101 | quantum, quantum… <span class="t-ok">CONCLUÍDO</span>
+[13-15ms] PID 102 | <span class="t-warn">Syscall → BLOQUEADO</span> (volta em 16ms)
+[15-16ms] <span class="t-dim">CPU Ociosa</span>
+[16-18ms] PID 102 | <span class="t-ok">CONCLUÍDO</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide stats-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Métricas finais · Priority_RR</div>
+          <h2 class="animate delay-2">O que o escalonador mede</h2>
+        </div>
+        <div class="stats-grid cols-4">
+          <div class="stat-card animate delay-1">
+            <div class="stat-value">5.67<small>ms</small></div>
+            <div class="stat-label">Espera média</div>
+            <p class="stat-note">Tempo na fila de pronto.</p>
+          </div>
+          <div class="stat-card animate delay-2">
+            <div class="stat-value">12.67<small>ms</small></div>
+            <div class="stat-label">Retorno médio</div>
+            <p class="stat-note">Da chegada até concluir.</p>
+          </div>
+          <div class="stat-card animate delay-3">
+            <div class="stat-value">3.00<small>ms</small></div>
+            <div class="stat-label">Resposta média</div>
+            <p class="stat-note">Até a primeira vez na CPU.</p>
+          </div>
+          <div class="stat-card card--accent animate delay-4">
+            <div class="stat-value">94.4<small>%</small></div>
+            <div class="stat-label">Uso da CPU</div>
+            <p class="stat-note">17 de 18 ms ocupada · 10 trocas de contexto.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>04</b> · Processos</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 4.3 · Threads e mutex</div>
+          <h2 class="animate delay-2">Duas threads, um recurso: <span class="accent-text">exclusão mútua</span></h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Processo com duas threads</div>
+              <button class="cmd">create_process --name Editor --burst 6ms --priority 1</button>
+              <button class="cmd">create_thread Editor T2</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Disputa pelo mutex</div>
+              <button class="cmd">mutex_lock Editor T1 Arquivo</button>
+              <button class="cmd">mutex_lock Editor T2 Arquivo</button>
+              <button class="cmd">mutex_status</button>
+              <button class="cmd">mutex_unlock Editor T1 Arquivo</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">&gt; mutex_lock Editor T1 Arquivo</span>
+<span class="t-ok">Lock adquirido pela Thread 'T1' no Mutex 'Arquivo'.</span>
+<span class="t-in">&gt; mutex_lock Editor T2 Arquivo</span>
+<span class="t-warn">Mutex 'Arquivo' ocupado por 'T1'. Thread 'T2' bloqueada.</span>
+<span class="t-in">&gt; mutex_status</span>
+Estado         : OCUPADO
+Dono Atual     : Thread T1 (Editor)
+Fila de Espera : [Thread T2] (1 aguardando)
+<span class="t-in">&gt; mutex_unlock Editor T1 Arquivo</span>
+<span class="t-acc">Mutex 'Arquivo' liberado por 'T1'.
+Posse transferida para 'T2'.</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== 05 MEMÓRIA -->
+    <section class="slide divider-slide" data-module="05">
+      <div class="divider-num">05</div>
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="divider-content">
+          <div class="eyebrow mono animate delay-1">Módulo 05</div>
+          <h2 class="animate delay-2">Gerenciamento de <span class="accent-text">Memória</span></h2>
+          <p class="subtitle animate delay-3">Uma RAM híbrida: contígua para o núcleo, paginada para os programas.</p>
+          <div class="start-box animate delay-4">
+            <div class="mono">Ponto de partida</div>
+            <p><code>java -cp out fsim.Main</code>: cada demo começa com <code>memory_format</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide comparison-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading">
+          <div class="eyebrow mono animate delay-1">Arquitetura híbrida</div>
+          <h2 class="animate delay-2">Duas áreas, duas estratégias</h2>
+        </div>
+        <div class="comparison-grid">
+          <div class="comparison-col muted animate delay-1">
+            <div class="feature-tag">ReservedArena.java</div>
+            <h3>Área reservada</h3>
+            <ul>
+              <li>Núcleo do SO e processos críticos</li>
+              <li>Alocação contígua (first, best, worst-fit)</li>
+              <li>Sofre fragmentação externa</li>
+              <li>Resolvida com compactação</li>
+            </ul>
+          </div>
+          <div class="comparison-col accent animate delay-2">
+            <div class="feature-tag">PagedMemory.java</div>
+            <h3>Área dinâmica</h3>
+            <ul>
+              <li>Processos normais, em páginas de 4 KB</li>
+              <li>Páginas só carregam quando usadas</li>
+              <li>Fragmentação interna na última página</li>
+              <li>RAM cheia: página vítima vai para o swap</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 5.1 · Área reservada</div>
+          <h2 class="animate delay-2">Um driver sai e deixa um <span class="accent-text">buraco</span></h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Configurar RAM</div>
+              <button class="cmd">memory_format --reserved 4MB --dynamic 64KB --page-size 4KB --fit first</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Três drivers críticos</div>
+              <button class="cmd">create_process --name Kernel_DiskDriver --size 1MB --type critical</button>
+              <button class="cmd">create_process --name Kernel_NetDriver --size 512KB --type critical</button>
+              <button class="cmd">create_process --name Kernel_CryptoEngine --size 512KB --type critical</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Remover o do meio</div>
+              <button class="cmd">terminate_process --name Kernel_NetDriver</button>
+              <button class="cmd">memory_status --reserved</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">--- MAPA DA ÁREA RESERVADA (4.0 MB) ---</span>
+[0.0 - 1.0 MB] Núcleo Base do SO   [OCUPADO]
+[1.0 - 2.0 MB] Kernel_DiskDriver   [OCUPADO]
+[2.0 - 2.5 MB] <span class="t-err">FRAGMENTO LIVRE 1   [LACUNA]</span>
+[2.5 - 3.0 MB] Kernel_CryptoEngine [OCUPADO]
+[3.0 - 4.0 MB] <span class="t-err">FRAGMENTO LIVRE 2   [LACUNA]</span>
+
+Memória livre         : 1.5 MB
+Maior bloco contíguo  : 1 MB
+Frag. Externa         : <span class="t-err">SIM (2 fragmentos)</span>
+<span class="t-warn">Status: Uma requisição contígua de 1.5 MB
+falhará por ausência de bloco único.</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 5.1 · continuação</div>
+          <h2 class="animate delay-2">Compactação junta os buracos</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">Compactar a área reservada</div>
+              <button class="cmd">memory_compact --reserved</button>
+            </div>
+            <div class="insight">
+              <div class="mono">Mesma ideia</div>
+              <p>É o equivalente do <code>defrag</code> do disco, mas feito na RAM: o CryptoEngine desce para fechar a lacuna.</p>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre><span class="t-in">[EXECUTANDO COMPACTAÇÃO DA ÁREA RESERVADA]</span>
+- 'Kernel_CryptoEngine':
+  [2.5 - 3.0 MB] <span class="t-acc">→ [2.0 - 2.5 MB]</span>
+
+<span class="t-in">--- MAPA APÓS COMPACTAÇÃO ---</span>
+[0.0 - 1.0 MB] Núcleo Base do SO    [OCUPADO]
+[1.0 - 2.0 MB] Kernel_DiskDriver    [OCUPADO]
+[2.0 - 2.5 MB] Kernel_CryptoEngine  [OCUPADO]
+[2.5 - 4.0 MB] <span class="t-ok">Bloco Livre Contíguo (1.5 MB)</span>
+<span class="t-ok">Resultado: Fragmentação externa eliminada.</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 5.2 · Paginação sob demanda</div>
+          <h2 class="animate delay-2">MISS, <span class="accent-text">page fault</span>, HIT</h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">10 KB em páginas de 4 KB = 3 páginas</div>
+              <button class="cmd">create_process --name App_Navegador --size 10KB --type normal</button>
+              <button class="cmd">page_table --process App_Navegador</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Acessar a página 2</div>
+              <button class="cmd">translate_address --process App_Navegador --page 2 --offset 100</button>
+              <button class="cmd">execute_step --process App_Navegador --page 2</button>
+              <button class="cmd">translate_address --process App_Navegador --page 2 --offset 100</button>
+            </div>
+            <div class="cmd-hint">continua na RAM configurada na demo 5.1</div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada</span></div>
+<pre>PÁG  MOLDURA  V  OCUPADO  FRAG.INT
+0    -        0  4096 B   0 B
+1    -        0  4096 B   0 B
+2    -        0  2048 B   <span class="t-warn">2048 B</span>
+<span class="t-in">&gt; translate_address … --page 2</span>
+Página Lógica 2 → <span class="t-err">[MISS / AUSENTE NA RAM]</span>
+<span class="t-in">&gt; execute_step … --page 2</span>
+<span class="t-warn">[PAGE FAULT DETECTADO]</span>: Página 2 ausente!
+- Carregando na Moldura Física 0
+<span class="t-in">&gt; translate_address … --page 2</span>
+Página Lógica 2 → Moldura 0 <span class="t-ok">[HIT]</span>
+<span class="t-acc">Endereço Físico: 0 × 4096 + 100 = 0x64</span></pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide demo-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 5.3 · Substituição de páginas</div>
+          <h2 class="animate delay-2">RAM cheia: a página mais antiga vai para o <span class="accent-text">swap</span></h2>
+        </div>
+        <div class="demo-grid">
+          <div class="cmd-panel animate delay-2">
+            <div class="cmd-group">
+              <div class="mono">RAM minúscula: 3 molduras, política LRU</div>
+              <button class="cmd">memory_format --reserved 2MB --dynamic 12KB --page-size 4KB --policy LRU</button>
+              <button class="cmd">create_process --name ProcA --size 8KB --type normal</button>
+              <button class="cmd">create_process --name ProcB --size 8KB --type normal</button>
+            </div>
+            <div class="cmd-group">
+              <div class="mono">Encher a RAM e estourar</div>
+              <button class="cmd">execute_step --process ProcA --page 0</button>
+              <button class="cmd">execute_step --process ProcA --page 1</button>
+              <button class="cmd">execute_step --process ProcB --page 0</button>
+              <button class="cmd">execute_step --process ProcB --page 1</button>
+            </div>
+          </div>
+          <figure class="terminal animate delay-3">
+            <div class="terminal-bar"><i></i><i></i><i></i><span>saída esperada · último comando</span></div>
+<pre><span class="t-in">ProcB requisita acesso à Página Lógica 1...</span>
+<span class="t-warn">[PAGE FAULT DETECTADO]</span>: Página 1 ausente na RAM!
+<span class="t-err">Memória RAM cheia.</span> Executando Substituição
+de Página (Algoritmo LRU):
+- Página 0 do PID 101 não é usada há
+  mais tempo (Mais antiga).
+- Removendo Página 0 do PID 101 da RAM
+  <span class="t-acc">→ Salvando no Swap (Disco).</span>
+- Carregando Página 1 do ProcB na
+  <span class="t-ok">Moldura Física 0</span>.</pre>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide stats-slide">
+      <div class="slide-inner">
+        <div class="module-tag"><b>05</b> · Memória</div>
+        <div class="slide-counter"></div>
+        <div class="section-heading compact">
+          <div class="eyebrow mono animate delay-1">Demo 5.4 · Comparação · 3 molduras, 20 referências</div>
+          <h2 class="animate delay-2">Page faults por algoritmo (menos é melhor)</h2>
+        </div>
+        <div class="cmd-panel animate delay-2">
+          <button class="cmd">page_sim --frames 3 --refs 7,0,1,2,0,3,0,4,2,3,0,3,2,1,2,0,1,7,0,1 --policy ALL</button>
+        </div>
+        <div class="stats-grid cols-4">
+          <div class="stat-card card--accent animate delay-1">
+            <div class="stat-value">9</div>
+            <div class="stat-label">Ótimo</div>
+            <p class="stat-note">Conhece o futuro. Limite teórico.</p>
+          </div>
+          <div class="stat-card animate delay-2">
+            <div class="stat-value">12</div>
+            <div class="stat-label">LRU</div>
+            <p class="stat-note">Melhor dos reais: 40% de acerto.</p>
+          </div>
+          <div class="stat-card animate delay-3">
+            <div class="stat-value">14</div>
+            <div class="stat-label">Seg. Chance · LFU</div>
+            <p class="stat-note">Aproximações mais baratas.</p>
+          </div>
+          <div class="stat-card animate delay-4">
+            <div class="stat-value">15</div>
+            <div class="stat-label">FIFO</div>
+            <p class="stat-note">Ignora o uso. Pior resultado.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================== ENCERRAMENTO -->
+    <section class="slide closing-slide">
+      <div class="slide-inner">
+        <div class="slide-counter"></div>
+        <div class="closing-content">
+          <div class="eyebrow mono animate delay-1">Encerramento</div>
+          <h2 class="animate delay-2" style="font-size: var(--fs-h1); max-width: 14ch;">Cinco módulos, <span class="accent-text">um único sistema</span></h2>
+          <p class="subtitle animate delay-3">Arquivos geram E/S, a segurança protege os arquivos, os processos usam a memória e a memória usa o disco para o swap.</p>
+          <div class="cta-row animate delay-4">
+            <button class="btn btn-primary" data-goto="0">Voltar ao início</button>
+            <span class="btn btn-secondary">Perguntas?</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    const slides = Array.from(document.querySelectorAll('.slide'));
+    const dotsContainer = document.querySelector('.dot-nav');
+    const total = String(slides.length).padStart(2, '0');
+
+    slides.forEach((slide, i) => {
+      const counter = slide.querySelector('.slide-counter');
+      if (counter) counter.textContent = `${String(i + 1).padStart(2, '0')} / ${total}`;
+    });
+
+    function scrollToSlide(index) {
+      const clamped = Math.max(0, Math.min(index, slides.length - 1));
+      slides[clamped].scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function buildDots() {
+      slides.forEach((slide, index) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.setAttribute('aria-label', `Ir para o slide ${index + 1}`);
+        if (slide.dataset.module) btn.classList.add('module-start');
+        btn.addEventListener('click', () => scrollToSlide(index));
+        dotsContainer.appendChild(btn);
+      });
+    }
+
+    function setActiveDot(index) {
+      dotsContainer.querySelectorAll('button').forEach((dot, i) => {
+        dot.classList.toggle('active', i === index);
+      });
+    }
+
+    const slideObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) setActiveDot(slides.indexOf(entry.target));
+      });
+    }, { threshold: 0.6 });
+
+    const animationObserver = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('in');
+          animationObserver.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.2 });
+
+    slides.forEach(slide => slideObserver.observe(slide));
+    document.querySelectorAll('.animate').forEach(el => animationObserver.observe(el));
+
+    function getCurrentSlideIndex() {
+      let closestIndex = 0;
+      let closestDistance = Infinity;
+      slides.forEach((slide, index) => {
+        const distance = Math.abs(slide.getBoundingClientRect().top);
+        if (distance < closestDistance) {
+          closestDistance = distance;
+          closestIndex = index;
+        }
+      });
+      return closestIndex;
+    }
+
+    document.addEventListener('keydown', (event) => {
+      const current = getCurrentSlideIndex();
+      if (['ArrowDown', 'ArrowRight', 'PageDown', ' '].includes(event.key)) {
+        event.preventDefault();
+        scrollToSlide(current + 1);
+      } else if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(event.key)) {
+        event.preventDefault();
+        scrollToSlide(current - 1);
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        scrollToSlide(0);
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        scrollToSlide(slides.length - 1);
+      }
+    });
+
+    document.querySelectorAll('[data-goto]').forEach(el => {
+      el.addEventListener('click', () => scrollToSlide(Number(el.dataset.goto)));
+    });
+
+    /* ---- clique para copiar comandos ---- */
+    function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* sem área de transferência */ }
+      ta.remove();
+      return Promise.resolve();
+    }
+
+    document.querySelectorAll('.cmd').forEach(btn => {
+      btn.type = 'button';
+      btn.title = 'Clique para copiar';
+      btn.addEventListener('click', () => {
+        copyText(btn.textContent.trim()).then(() => {
+          document.querySelectorAll('.cmd.copied').forEach(b => b.classList.remove('copied'));
+          btn.classList.add('copied');
+          setTimeout(() => btn.classList.remove('copied'), 1400);
+        });
+      });
+    });
+
+    buildDots();
+    setActiveDot(0);
+  </script>
+</body>
+</html>
